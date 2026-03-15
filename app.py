@@ -1632,7 +1632,7 @@ def send_ready_email(to_email: str, checkout_url: str,
 </html>"""
 
         msg = Mail(
-            from_email="noreply@ultradub.ai",
+            from_email="emre.senturer@live.com",
             to_emails=to_email,
             subject="Your Ultradub video is ready - pay & download now",
             html_content=html,
