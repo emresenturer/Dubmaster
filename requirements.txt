@@ -1,0 +1,23 @@
+# Ultradub - Railway.app dependencies
+# Railway uses Python 3.11 by default - all packages confirmed compatible
+
+# Core framework
+streamlit>=1.35.0
+
+# Video downloading
+yt-dlp>=2024.5.1
+
+# HTTP & API calls
+requests>=2.31.0
+
+# Payments
+stripe>=8.0.0
+
+# Email notifications
+sendgrid>=6.0.0
+
+# Music separation (ONNX-based, CPU-only - lighter than demucs)
+audio-separator[cpu]>=0.17.0
+
+# Utilities
+numpy>=1.24.0
