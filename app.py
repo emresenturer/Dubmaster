@@ -2790,12 +2790,12 @@ with tab_proj:
     # ── Step 1: Video source ─────────────────────────────────────────────────
     st.markdown('<div class="ud-section-label">1 - Video source</div>',
                 unsafe_allow_html=True)
-    src = st.radio("", ["YouTube / URL", "Upload a file"],
+    src = st.radio("Video source", ["YouTube / URL", "Upload a file"],
                    horizontal=True, label_visibility="collapsed")
 
     yt_url, uploaded_file = "", None
     if src == "YouTube / URL":
-        yt_url = st.text_input("", placeholder="https://www.youtube.com/watch?v=...",
+        yt_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...",
                                label_visibility="collapsed")
     else:
         uploaded_file = st.file_uploader(
@@ -2888,7 +2888,7 @@ with tab_proj:
     st.markdown('<div class="ud-section-label">4 - Email notification (optional)</div>',
                 unsafe_allow_html=True)
     user_email = st.text_input(
-        "",
+        "Email notification",
         placeholder="your@email.com - we'll notify you when ready",
         label_visibility="collapsed",
         key="email_input")
