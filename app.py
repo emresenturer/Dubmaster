@@ -1534,20 +1534,34 @@ def generate_srt(segments: list[dict], text_key: str = "translated") -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # BACKGROUND MUSIC SEPARATION (audio-separator - ONNX, lightweight)
 # ══════════════════════════════════════════════════════════════════════════════
+def _is_mono(audio_path: str) -> bool:
+    """Return True if audio file has only 1 channel."""
+    r = subprocess.run(
+        ["ffprobe", "-v", "error",
+         "-select_streams", "a:0",
+         "-show_entries", "stream=channels",
+         "-of", "default=noprint_wrappers=1:nokey=1",
+         audio_path],
+        capture_output=True, text=True)
+    try:    return int(r.stdout.strip()) == 1
+    except: return True  # assume mono if uncertain
+
+
 def separate_music(audio_path: str, work_dir: str) -> tuple[str, str]:
     """
-    Separate vocals from background music using audio-separator (ONNX).
-    Returns (vocals_path, no_vocals_path) as WAV files.
-    Falls back to ffmpeg high-pass filter if audio-separator unavailable.
+    Separate vocals from background music.
+    Returns (vocals_path, no_vocals_path).
+
+    For mono audio (phone recordings) the stereo centre-channel trick
+    produces silence, so we skip it and return the original audio as vocals.
     """
-    # Try audio-separator first
+    # Try audio-separator first (requires package installed)
     try:
         from audio_separator.separator import Separator
         sep = Separator(output_dir=work_dir, output_format="wav",
-                        log_level=40)  # suppress logs
+                        log_level=40)
         sep.load_model("UVR-MDX-NET-Inst_HQ_3.onnx")
         result = sep.separate(audio_path)
-        # audio-separator returns [vocals_path, no_vocals_path]
         vocals    = next((p for p in result if "Vocals"   in p or "vocals"   in p), result[0])
         no_vocals = next((p for p in result if "Instrum"  in p or "no_vocal" in p), result[-1])
         return vocals, no_vocals
@@ -1556,17 +1570,27 @@ def separate_music(audio_path: str, work_dir: str) -> tuple[str, str]:
     except Exception:
         pass
 
-    # Fallback: ffmpeg centre-channel extraction (stereo only, rough)
+    # Fallback: only works reliably on stereo audio
+    # For mono (most phone videos) the c0-c1 trick = silence, so skip it
     vocals_path    = os.path.join(work_dir, "vocals_approx.mp3")
     no_vocals_path = os.path.join(work_dir, "no_vocals_approx.mp3")
 
-    # Rough vocal extraction (centre-panned content)
+    if _is_mono(audio_path):
+        # Mono audio: cannot do centre-channel separation.
+        # Return original audio as vocals, silence as no_vocals.
+        # Music preservation will be skipped gracefully in step_merge.
+        import shutil as _sh
+        _sh.copy2(audio_path, vocals_path)
+        # Create a short silence file as placeholder
+        make_silence(0.1, no_vocals_path)
+        return vocals_path, no_vocals_path
+
+    # Stereo audio: rough centre-channel extraction
     _run(["ffmpeg", "-y", "-i", audio_path,
           "-af", "pan=stereo|c0=c0-c1|c1=c1-c0,highpass=f=200,loudnorm",
           "-ar", "22050", "-ac", "2",
           vocals_path])
 
-    # Rough music extraction (sides)
     _run(["ffmpeg", "-y", "-i", audio_path,
           "-af", "pan=stereo|c0=c1|c1=c0,lowpass=f=4000,loudnorm",
           "-ar", "22050", "-ac", "2",
@@ -3218,10 +3242,26 @@ with tab_proj:
             stat_ph.info("Transcribing speech…")
             segs, detected_key = transcribe_audio(audio_for_stt, src_key, gkey)
 
+            # Retry 1: if vocals-separated audio gave nothing, try original
+            if not segs and audio_for_stt != audio_path:
+                stat_ph.info(
+                    "Retrying transcription with original audio…")
+                segs, detected_key = transcribe_audio(
+                    audio_path, src_key, gkey)
+
+            # Retry 2: if auto-detect gave nothing, force Russian
+            # (common for short phone videos where detection fails)
+            if not segs and src_key == "auto":
+                stat_ph.info(
+                    "Auto-detect found no speech - retrying as Russian…")
+                segs, detected_key = transcribe_audio(
+                    audio_path, "ru-RU", gkey)
+
             if not segs:
                 raise ValueError(
                     "No speech detected. "
-                    "Please check that the video contains clear spoken audio.")
+                    "Please check that the video contains clear spoken audio, "
+                    "or select the source language manually instead of Auto-detect.")
 
             st.session_state.detected_lang = detected_key
             mark("transcribe",
