@@ -16,8 +16,8 @@ stripe>=8.0.0
 # Email notifications
 sendgrid>=6.0.0
 
-# Music separation (ONNX-based, CPU-only - lighter than demucs)
-audio-separator[cpu]>=0.17.0
+# Note: audio-separator excluded - too heavy for free tier (pulls torch ~2GB)
+# App falls back to ffmpeg audio separation automatically
 
 # Utilities
 numpy>=1.24.0
