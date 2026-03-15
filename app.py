@@ -2106,8 +2106,22 @@ def step_save_upload(f, work_dir: str) -> str:
 
 
 def step_extract_audio(video: str, out: str) -> None:
-    _run(["ffmpeg", "-y", "-i", video, "-vn",
-          "-acodec", "libmp3lame", "-q:a", "4", out])
+    """
+    Extract audio from video and re-encode to 16kHz mono MP3.
+    Explicit re-encoding is critical for phone-recorded videos
+    (iPhone MOV, Android MP4) which use AAC/HEVC codecs that
+    Google STT rejects when stream-copied. We force:
+      - 16kHz sample rate (Google STT optimal)
+      - mono channel (removes stereo phase issues)
+      - libmp3lame encoding (universal compatibility)
+    """
+    _run(["ffmpeg", "-y", "-i", video,
+          "-vn",
+          "-ar", "16000",
+          "-ac", "1",
+          "-acodec", "libmp3lame",
+          "-q:a", "3",
+          out])
 
 
 def make_silence(dur: float, out: str) -> None:
@@ -2427,23 +2441,128 @@ st.markdown("""
   </div>
 
   <div class="ud-hero-visual">
-    <div class="ud-video-card">
-      <div class="ud-video-thumb">
-        <div class="ud-play-btn">▶</div>
+    <div style="
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-xl);
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+      width: 100%;
+    ">
+      <!-- Card header -->
+      <div style="
+        background: linear-gradient(135deg, #1A73E8 0%, #4285F4 100%);
+        padding: 1.4rem 1.5rem 1.2rem;
+      ">
+        <div style="font-size:.72rem;font-weight:700;letter-spacing:1.5px;
+                    text-transform:uppercase;color:rgba(255,255,255,.75);
+                    margin-bottom:.4rem;">
+          What Ultradub does
+        </div>
+        <div style="font-size:1.1rem;font-weight:700;color:#fff;line-height:1.3;">
+          One video. Dubbed into<br>any language. In minutes.
+        </div>
       </div>
-      <div class="ud-video-meta">
-        <span>Dubbing in progress</span>
-        <span class="ud-video-duration">8:42</span>
+      <!-- Feature list -->
+      <div style="padding: .5rem 0;">
+        <div style="display:flex;align-items:center;gap:.9rem;
+                    padding:.75rem 1.25rem;border-bottom:1px solid var(--border);">
+          <div style="width:36px;height:36px;border-radius:50%;
+                      background:var(--blue-light);display:flex;
+                      align-items:center;justify-content:center;
+                      font-size:1rem;flex-shrink:0;">🎙</div>
+          <div>
+            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
+              Auto voice cloning
+            </div>
+            <div style="font-size:.75rem;color:var(--text-2);">
+              Your speaker's voice, in the new language
+            </div>
+          </div>
+          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
+                      color:var(--green);background:var(--green-bg);
+                      padding:.2rem .6rem;border-radius:var(--r-pill);">
+            Included
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:.9rem;
+                    padding:.75rem 1.25rem;border-bottom:1px solid var(--border);">
+          <div style="width:36px;height:36px;border-radius:50%;
+                      background:var(--blue-light);display:flex;
+                      align-items:center;justify-content:center;
+                      font-size:1rem;flex-shrink:0;">🌍</div>
+          <div>
+            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
+              40+ languages
+            </div>
+            <div style="font-size:.75rem;color:var(--text-2);">
+              Neural AI voices — not robotic TTS
+            </div>
+          </div>
+          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
+                      color:var(--blue);background:var(--blue-light);
+                      padding:.2rem .6rem;border-radius:var(--r-pill);">
+            Auto-detect
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:.9rem;
+                    padding:.75rem 1.25rem;border-bottom:1px solid var(--border);">
+          <div style="width:36px;height:36px;border-radius:50%;
+                      background:var(--blue-light);display:flex;
+                      align-items:center;justify-content:center;
+                      font-size:1rem;flex-shrink:0;">📄</div>
+          <div>
+            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
+              SRT subtitles
+            </div>
+            <div style="font-size:.75rem;color:var(--text-2);">
+              Timed subtitles ready for YouTube &amp; social
+            </div>
+          </div>
+          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
+                      color:var(--green);background:var(--green-bg);
+                      padding:.2rem .6rem;border-radius:var(--r-pill);">
+            Free
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:.9rem;
+                    padding:.75rem 1.25rem;">
+          <div style="width:36px;height:36px;border-radius:50%;
+                      background:var(--blue-light);display:flex;
+                      align-items:center;justify-content:center;
+                      font-size:1rem;flex-shrink:0;">⚡</div>
+          <div>
+            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
+              No account needed
+            </div>
+            <div style="font-size:.75rem;color:var(--text-2);">
+              Pay once, download instantly — nothing stored
+            </div>
+          </div>
+          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
+                      color:var(--green);background:var(--green-bg);
+                      padding:.2rem .6rem;border-radius:var(--r-pill);">
+            Always
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="ud-lang-arrow">
-      <div class="ud-lang-pill">🇷🇺 Russian</div>
-      <span class="ud-arrow-icon">→</span>
-      <div class="ud-lang-pill target">🇺🇸 English</div>
-    </div>
-    <div class="ud-status-pill">
-      <span class="ud-status-dot"></span>
-      Processing · 4 min remaining
+      <!-- Footer price anchor -->
+      <div style="
+        border-top:1px solid var(--border);
+        background:var(--surface-2);
+        padding:.75rem 1.25rem;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+      ">
+        <div style="font-size:.78rem;color:var(--text-2);">
+          Starting from
+        </div>
+        <div style="font-size:1.4rem;font-weight:700;color:var(--blue);">
+          $4.99 <span style="font-size:.75rem;font-weight:400;
+                             color:var(--text-2);">per video</span>
+        </div>
+      </div>
     </div>
   </div>
 </div>
