@@ -2100,49 +2100,53 @@ def run_lipsync(video: str, audio: str, api_key: str, stat_ph) -> str:
 # CORE PIPELINE STEPS
 # ══════════════════════════════════════════════════════════════════════════════
 def step_download(url: str, work_dir: str) -> str:
+    """
+    Download video from YouTube or other URL.
+
+    YouTube actively blocks cloud server IPs with SABR streaming.
+    We try multiple player clients in order of reliability:
+      1. tv_embedded  - most reliable bypass for cloud IPs
+      2. mweb         - mobile web, often works when others fail
+      3. web_creator  - creator studio client, less restricted
+      4. ios          - iOS client format
+    Falls back with a clear upload-directly message if all fail.
+    """
     cookies = find_cookies()
     tmpl    = os.path.join(work_dir, "source.%(ext)s")
 
-    # Base yt-dlp arguments
-    # --extractor-args youtube:player_client=web bypasses 403 on cloud IPs
-    # --js-runtimes nodejs tells yt-dlp to use Node.js (installed via packages.txt)
-    base_args = [
-        "yt-dlp",
-        "--extractor-args", "youtube:player_client=web",
-        "--js-runtimes", "nodejs",
-        "--format", "bestvideo[height<=720][ext=mp4]+bestaudio/best[height<=720]",
-        "--merge-output-format", "mp4",
-        "--output", tmpl,
-        "--no-playlist",
+    clients = [
+        "tv_embedded",
+        "mweb",
+        "web_creator",
+        "ios",
     ]
 
-    try:
-        _run(base_args + cookies + [url])
-    except RuntimeError:
-        # Fallback: try with android player client (different bypass method)
+    last_error = None
+    for client in clients:
         try:
-            fallback_args = [
+            _run([
                 "yt-dlp",
-                "--extractor-args", "youtube:player_client=android",
+                "--extractor-args", f"youtube:player_client={client}",
+                "--js-runtimes", "nodejs",
                 "--format", "best[height<=720]/best",
                 "--output", tmpl,
                 "--no-playlist",
-            ]
-            _run(fallback_args + cookies + [url])
-        except RuntimeError as e2:
-            raise RuntimeError(
-                "YouTube download failed. YouTube actively blocks downloads "
-                "from cloud servers. To fix this: upload a cookies.txt file "
-                "from your browser (see FAQ), or download the video manually "
-                f"and upload it directly.\n\nDetails: {e2}"
-            ) from e2
+                "--no-check-certificates",
+            ] + cookies + [url])
+            # If we get here it worked
+            files = list(Path(work_dir).glob("source.*"))
+            if files:
+                return str(files[0])
+        except RuntimeError as e:
+            last_error = str(e)
+            continue
 
-    files = list(Path(work_dir).glob("source.*"))
-    if not files:
-        raise FileNotFoundError(
-            "Video could not be downloaded. "
-            "Try uploading the video file directly instead of using a YouTube URL.")
-    return str(files[0])
+    raise RuntimeError(
+        "YouTube is blocking downloads from cloud servers for this video. "
+        "The easiest fix is to download the video to your phone or computer "
+        "and upload it directly using the 'Upload a file' option. "
+        f"\n\nTechnical details: {last_error}"
+    )
 
 
 def step_save_upload(f, work_dir: str) -> str:
@@ -2235,9 +2239,12 @@ def step_merge(video: str, segs: list[dict],
     dubbed_mp3 = os.path.join(work_dir, f"dubbed{suffix}.mp3")
 
     if no_vocals_path and os.path.exists(no_vocals_path):
-        # Blend dubbed voice + original music
+        # Blend dubbed voice + original music.
+        # music_in = number of inputs already added before no_vocals.
+        # inputs has: ["-i", sil] + ["-i", tts] * len(segs) = 1 + len(segs) inputs.
+        # Each input is 2 list items, so actual input count = len(inputs) // 2.
+        music_in = len(inputs) // 2  # correct 0-based index for no_vocals
         inputs  += ["-i", no_vocals_path]
-        music_in = len(delays) + 1
         filters.append(f"[dubbed][{music_in}:a]amix=inputs=2:weights=1 0.6:normalize=0[aout]")
     else:
         filters[-1] = filters[-1].replace("[dubbed]", "[aout]")
