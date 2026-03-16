@@ -2102,16 +2102,46 @@ def run_lipsync(video: str, audio: str, api_key: str, stat_ph) -> str:
 def step_download(url: str, work_dir: str) -> str:
     cookies = find_cookies()
     tmpl    = os.path.join(work_dir, "source.%(ext)s")
-    _run(["yt-dlp",
-          "--format",
-          "bestvideo[height<=720][ext=mp4]+bestaudio/best[height<=720]",
-          "--merge-output-format", "mp4",
-          "--output", tmpl, "--no-playlist"] + cookies + [url])
+
+    # Base yt-dlp arguments
+    # --extractor-args youtube:player_client=web bypasses 403 on cloud IPs
+    # --js-runtimes nodejs tells yt-dlp to use Node.js (installed via packages.txt)
+    base_args = [
+        "yt-dlp",
+        "--extractor-args", "youtube:player_client=web",
+        "--js-runtimes", "nodejs",
+        "--format", "bestvideo[height<=720][ext=mp4]+bestaudio/best[height<=720]",
+        "--merge-output-format", "mp4",
+        "--output", tmpl,
+        "--no-playlist",
+    ]
+
+    try:
+        _run(base_args + cookies + [url])
+    except RuntimeError:
+        # Fallback: try with android player client (different bypass method)
+        try:
+            fallback_args = [
+                "yt-dlp",
+                "--extractor-args", "youtube:player_client=android",
+                "--format", "best[height<=720]/best",
+                "--output", tmpl,
+                "--no-playlist",
+            ]
+            _run(fallback_args + cookies + [url])
+        except RuntimeError as e2:
+            raise RuntimeError(
+                "YouTube download failed. YouTube actively blocks downloads "
+                "from cloud servers. To fix this: upload a cookies.txt file "
+                "from your browser (see FAQ), or download the video manually "
+                f"and upload it directly.\n\nDetails: {e2}"
+            ) from e2
+
     files = list(Path(work_dir).glob("source.*"))
     if not files:
         raise FileNotFoundError(
             "Video could not be downloaded. "
-            "If this is a YouTube URL, add a cookies.txt file to bypass geographic/bot restrictions.")
+            "Try uploading the video file directly instead of using a YouTube URL.")
     return str(files[0])
 
 
