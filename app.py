@@ -3,29 +3,33 @@
 ULTRADUB
 Your voice, in every language.
 
-Version 4.0 - Complete Production Build
-(c) 2025 Ultradub
+Version 5.0 - Simple upload flow
+(c) 2026 Ultradub
 
-Features:
-  - Google-inspired corporate identity (white, clean, professional)
-  - 40+ languages - all Neural2/Wavenet confirmed voices
-  - Background music preservation (audio-separator, ONNX-based)
-  - SRT subtitle export - free with every dub
-  - Multi-language bundle - 3 languages for price of 2
-  - Rich progress bar with per-step ETAs and context
-  - Email delivery via SendGrid (optional, shown upfront)
-  - Auto voice cloning from original video audio
-  - Zero vendor names visible in UI
-  - Fully responsive - desktop, tablet, phone
+Flow:
+  1. Visitor uploads a video they recorded
+  2. Picks the language they speak and up to 3 languages to dub into
+  3. Chooses a standard AI voice or their own voice (+$3.99), and optional lip sync
+  4. Gets a free 15-second preview and an exact price
+  5. Pays once and downloads every version plus subtitles
+
+Configuration comes only from Streamlit secrets / environment variables:
+  Required: GOOGLE_API_KEY, STRIPE_SECRET_KEY, APP_URL
+  Optional: ELEVENLABS_API_KEY (own-voice option), SYNCLABS_API_KEY (lip sync),
+            SUPPORT_EMAIL (shown in the footer)
+Demo videos: put demo/original.mp4 and demo/dubbed.mp4 in the repo,
+or set DEMO_ORIGINAL_URL and DEMO_DUBBED_URL.
 """
 
 import base64
+import html
 import os
 import re
 import shutil
 import subprocess
 import tempfile
 import time
+import traceback
 import uuid
 from pathlib import Path
 
@@ -43,1200 +47,117 @@ st.set_page_config(
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DESIGN SYSTEM - GOOGLE-INSPIRED CORPORATE IDENTITY
-# Palette: Pure white + Google Blue #1A73E8 + Neutral grays
-# Type: Plus Jakarta Sans (closest to Google Product Sans on Google Fonts)
-# Motion: Subtle, purposeful - not flashy
+# STYLES
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
-/* ── DESIGN TOKENS ── */
 :root {
-    --blue:         #1A73E8;
-    --blue-dark:    #1557B0;
-    --blue-light:   #E8F0FE;
-    --blue-mid:     #4285F4;
-    --surface:      #FFFFFF;
-    --surface-2:    #F8F9FA;
-    --surface-3:    #F1F3F4;
-    --border:       #DADCE0;
-    --border-dark:  #BDC1C6;
-    --text-1:       #202124;
-    --text-2:       #5F6368;
-    --text-3:       #80868B;
-    --text-inv:     #FFFFFF;
-    --green:        #188038;
-    --green-bg:     #E6F4EA;
-    --amber:        #EA8600;
-    --amber-bg:     #FEF7E0;
-    --red:          #C5221F;
-    --red-bg:       #FCE8E6;
-    --shadow-sm:    0 1px 2px rgba(60,64,67,.3),0 1px 3px rgba(60,64,67,.15);
-    --shadow-md:    0 1px 3px rgba(60,64,67,.3),0 4px 8px rgba(60,64,67,.15);
-    --shadow-lg:    0 2px 6px rgba(60,64,67,.3),0 4px 16px rgba(60,64,67,.15);
-    --r-sm:         4px;
-    --r-md:         8px;
-    --r-lg:         12px;
-    --r-xl:         16px;
-    --r-pill:       24px;
-    --font:         'Plus Jakarta Sans', sans-serif;
+    --blue:      #1A73E8;
+    --blue-dark: #1557B0;
+    --blue-soft: #E8F0FE;
+    --ink:       #202124;
+    --ink-2:     #5F6368;
+    --ink-3:     #80868B;
+    --line:      #DADCE0;
+    --paper:     #FFFFFF;
+    --paper-2:   #F8F9FA;
+    --green:     #188038;
+    --font:      'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
-/* ── RESET ── */
-*, *::before, *::after { box-sizing: border-box; }
 html, body, [class*="css"] {
     font-family: var(--font) !important;
-    background: var(--surface) !important;
-    color: var(--text-1) !important;
+    color: var(--ink);
     -webkit-font-smoothing: antialiased;
 }
-#MainMenu, footer, header { display: none !important; }
-.block-container { max-width: 900px !important; padding: 0 !important; }
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+#MainMenu, footer, header, [data-testid="stSidebar"],
+[data-testid="collapsedControl"] { display: none !important; }
+.block-container { max-width: 760px !important; padding-top: 1.25rem !important; }
 
-/* ══════════════════════════════════════════════════
-   NAVBAR
-══════════════════════════════════════════════════ */
-.ud-nav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 2rem;
-    height: 64px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-}
-.ud-wordmark {
-    font-size: 1.35rem;
-    font-weight: 700;
-    color: var(--text-1);
-    letter-spacing: -0.3px;
-}
-.ud-wordmark em { color: var(--blue); font-style: normal; }
-.ud-nav-links {
-    display: flex;
-    gap: 1.5rem;
-    font-size: .875rem;
-    font-weight: 500;
-    color: var(--text-2);
-}
-.ud-nav-links a { cursor: pointer; transition: color .15s; }
-.ud-nav-links a:hover { color: var(--blue); }
-.ud-nav-cta {
-    display: flex;
-    align-items: center;
-    gap: .75rem;
-}
+/* Wordmark */
+.ud-top { display: flex; align-items: baseline; justify-content: space-between;
+          padding: .25rem 0 1.5rem; border-bottom: 1px solid var(--line); }
+.ud-wordmark { font-size: 1.35rem; font-weight: 800; letter-spacing: -.4px; color: var(--ink); }
+.ud-wordmark span { color: var(--blue); }
+.ud-top-note { font-size: .82rem; color: var(--ink-3); }
 
-/* ══════════════════════════════════════════════════
-   BUTTONS
-══════════════════════════════════════════════════ */
-.ud-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: .4rem;
-    padding: .6rem 1.25rem;
-    border-radius: var(--r-pill);
-    font-family: var(--font);
-    font-size: .875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: box-shadow .15s, background .15s, border-color .15s;
-    text-decoration: none;
-    white-space: nowrap;
-    border: 1.5px solid transparent;
-    min-height: 40px;
-}
-.ud-btn-primary {
-    background: var(--blue);
-    color: var(--text-inv) !important;
-    border-color: var(--blue);
-}
-.ud-btn-primary:hover {
-    background: var(--blue-dark);
-    border-color: var(--blue-dark);
-    box-shadow: var(--shadow-sm);
-}
-.ud-btn-outline {
-    background: transparent;
-    color: var(--blue) !important;
-    border-color: var(--border);
-}
-.ud-btn-outline:hover { background: var(--blue-light); border-color: var(--blue); }
-.ud-btn-lg {
-    padding: .75rem 1.75rem;
-    font-size: 1rem;
-    min-height: 48px;
-}
+/* Hero */
+.ud-hero { padding: 2.25rem 0 1.25rem; }
+.ud-hero h1 { font-size: clamp(2rem, 5vw, 2.9rem); line-height: 1.08; font-weight: 800;
+              letter-spacing: -1.2px; margin: 0 0 .9rem; color: var(--ink); }
+.ud-hero p { font-size: 1.05rem; line-height: 1.6; color: var(--ink-2); margin: 0; max-width: 34em; }
 
-/* Streamlit button override */
-.stButton > button {
-    background: var(--blue) !important;
-    color: var(--text-inv) !important;
-    border: none !important;
-    border-radius: var(--r-pill) !important;
-    padding: .65rem 1.5rem !important;
-    font-family: var(--font) !important;
-    font-size: .875rem !important;
-    font-weight: 600 !important;
-    width: 100% !important;
-    min-height: 44px !important;
-    box-shadow: var(--shadow-sm) !important;
-    transition: background .15s, box-shadow .15s !important;
-    letter-spacing: .1px !important;
-}
-.stButton > button:hover {
-    background: var(--blue-dark) !important;
-    box-shadow: var(--shadow-md) !important;
-}
+/* Demo */
+.ud-demo-head { margin: 1.5rem 0 .5rem; font-weight: 700; font-size: 1.05rem; }
+.ud-demo-cap { font-size: .9rem; color: var(--ink-2); margin: -.25rem 0 .75rem; }
+.ud-clip-label { font-size: .85rem; font-weight: 600; color: var(--ink-2); margin-bottom: .35rem; }
+.ud-clip-label.dubbed { color: var(--blue); }
 
-/* ══════════════════════════════════════════════════
-   HERO
-══════════════════════════════════════════════════ */
-.ud-hero {
-    padding: 3.5rem 2rem 3rem;
-    background: var(--surface);
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 3rem;
-    align-items: center;
-    border-bottom: 1px solid var(--border);
-}
-.ud-hero-eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: .4rem;
-    background: var(--blue-light);
-    color: var(--blue-dark);
-    font-size: .78rem;
-    font-weight: 600;
-    letter-spacing: .5px;
-    padding: .3rem .75rem;
-    border-radius: var(--r-pill);
-    margin-bottom: 1rem;
-}
-.ud-hero-h1 {
-    font-size: clamp(2rem, 4vw, 3rem);
-    font-weight: 700;
-    line-height: 1.15;
-    color: var(--text-1);
-    margin-bottom: .85rem;
-    letter-spacing: -.5px;
-}
-.ud-hero-h1 .blue { color: var(--blue); }
-.ud-hero-sub {
-    font-size: 1.05rem;
-    font-weight: 400;
-    color: var(--text-2);
-    line-height: 1.7;
-    margin-bottom: 1.75rem;
-    max-width: 420px;
-}
-.ud-hero-ctas {
-    display: flex;
-    gap: .75rem;
-    flex-wrap: wrap;
-    margin-bottom: 1.5rem;
-}
-.ud-trust {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    align-items: center;
-}
-.ud-trust-item {
-    display: flex;
-    align-items: center;
-    gap: .3rem;
-    font-size: .8rem;
-    color: var(--text-2);
-}
-.ud-trust-check {
-    width: 16px; height: 16px;
-    border-radius: 50%;
-    background: var(--green-bg);
-    color: var(--green);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: 700;
-    flex-shrink: 0;
-}
+/* Form */
+.ud-form-head { margin: 2.25rem 0 .25rem; font-weight: 800; font-size: 1.35rem; letter-spacing: -.4px; }
+.ud-form-sub { color: var(--ink-2); font-size: .92rem; margin-bottom: 1rem; }
+.ud-meta { font-size: .88rem; color: var(--ink-2); margin: -.25rem 0 .75rem; }
 
-/* Hero visual — CSS mockup */
-.ud-hero-visual {
-    display: flex;
-    flex-direction: column;
-    gap: .75rem;
-    align-items: center;
-}
-.ud-video-card {
-    width: 100%;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    overflow: hidden;
-    box-shadow: var(--shadow-md);
-}
-.ud-video-thumb {
-    background: linear-gradient(135deg, #667eea11, #764ba211);
-    height: 140px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-bottom: 1px solid var(--border);
-    position: relative;
-}
-.ud-play-btn {
-    width: 44px; height: 44px;
-    border-radius: 50%;
-    background: rgba(255,255,255,.92);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: var(--shadow-md);
-    font-size: 16px;
-    padding-left: 3px;
-}
-.ud-video-meta {
-    padding: .75rem 1rem;
-    font-size: .8rem;
-    color: var(--text-2);
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-}
-.ud-video-duration {
-    margin-left: auto;
-    background: var(--text-1);
-    color: var(--text-inv);
-    font-size: .7rem;
-    font-weight: 600;
-    padding: 1px 5px;
-    border-radius: 3px;
-}
-.ud-lang-arrow {
-    display: flex;
-    align-items: center;
-    gap: .6rem;
-    width: 100%;
-}
-.ud-lang-pill {
-    flex: 1;
-    background: var(--surface);
-    border: 1.5px solid var(--border);
-    border-radius: var(--r-pill);
-    padding: .5rem .9rem;
-    font-size: .82rem;
-    font-weight: 600;
-    color: var(--text-1);
-    text-align: center;
-    box-shadow: var(--shadow-sm);
-}
-.ud-lang-pill.target {
-    border-color: var(--blue);
-    color: var(--blue);
-    background: var(--blue-light);
-}
-.ud-arrow-icon {
-    color: var(--text-3);
-    font-size: 1.2rem;
-    flex-shrink: 0;
-}
-.ud-status-pill {
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-    background: var(--green-bg);
-    border: 1px solid #34a853;
-    border-radius: var(--r-pill);
-    padding: .4rem .9rem;
-    font-size: .78rem;
-    font-weight: 600;
-    color: var(--green);
-    align-self: flex-start;
-}
-.ud-status-dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--green);
-    animation: pulse 2s infinite;
-}
-@keyframes pulse {
-    0%,100%{opacity:1;transform:scale(1)}
-    50%{opacity:.5;transform:scale(.75)}
-}
+/* Price line */
+.ud-price { display: flex; justify-content: space-between; align-items: baseline;
+            border-top: 1px solid var(--line); margin-top: 1rem; padding: 1rem 0 .75rem; }
+.ud-price-label { font-size: .95rem; color: var(--ink-2); }
+.ud-price-value { font-size: 1.8rem; font-weight: 800; letter-spacing: -.6px; color: var(--ink); }
+.ud-price-value.muted { font-size: 1rem; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
+.ud-price-lines { font-size: .85rem; color: var(--ink-2); line-height: 1.7; margin: -.25rem 0 .75rem; }
 
-/* ══════════════════════════════════════════════════
-   STATS BAR
-══════════════════════════════════════════════════ */
-.ud-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    background: var(--surface-2);
-    border-bottom: 1px solid var(--border);
+/* Buttons */
+div.stButton > button[kind="primary"],
+button[data-testid="stBaseButton-primary"] {
+    background: var(--blue) !important; border: none !important; color: #fff !important;
+    border-radius: 999px !important; font-weight: 700 !important;
+    padding: .7rem 1.4rem !important; font-size: 1rem !important;
 }
-.ud-stat {
-    padding: 1.25rem 1rem;
-    border-right: 1px solid var(--border);
-    text-align: center;
-}
-.ud-stat:last-child { border-right: none; }
-.ud-stat-n {
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: var(--text-1);
-    line-height: 1;
-}
-.ud-stat-n .b { color: var(--blue); }
-.ud-stat-l {
-    font-size: .75rem;
-    color: var(--text-2);
-    margin-top: .25rem;
-}
+div.stButton > button[kind="primary"]:hover,
+button[data-testid="stBaseButton-primary"]:hover { background: var(--blue-dark) !important; }
+div.stButton > button[kind="primary"]:disabled,
+button[data-testid="stBaseButton-primary"]:disabled { background: var(--line) !important; color: var(--ink-3) !important; }
 
-/* ══════════════════════════════════════════════════
-   SECTION LABELS
-══════════════════════════════════════════════════ */
-.ud-section-label {
-    font-size: .72rem;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    color: var(--text-3);
-    margin-bottom: .65rem;
-    margin-top: 1.75rem;
-}
-.ud-section-divider {
-    height: 1px;
-    background: var(--border);
-    margin: 1.5rem 0;
-}
+.ud-pay-btn { display: block; text-align: center; background: var(--blue); color: #fff !important;
+              text-decoration: none !important; font-weight: 700; font-size: 1.05rem;
+              border-radius: 999px; padding: .9rem 1.4rem; margin: 1rem 0 .5rem; }
+.ud-pay-btn:hover { background: var(--blue-dark); }
+.ud-pay-btn:focus-visible { outline: 3px solid var(--blue-soft); outline-offset: 2px; }
+.ud-pay-note { text-align: center; font-size: .82rem; color: var(--ink-3); }
 
-/* ══════════════════════════════════════════════════
-   CARDS
-══════════════════════════════════════════════════ */
-.ud-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 1.25rem;
-    box-shadow: var(--shadow-sm);
-}
-.ud-card-flat {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 1.25rem;
-}
+/* Progress */
+.ud-steps { border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; margin: 1rem 0; }
+.ud-steps-title { font-weight: 700; margin-bottom: .6rem; display: flex; justify-content: space-between; }
+.ud-steps-title small { font-weight: 500; color: var(--ink-3); }
+.ud-step { display: flex; gap: .7rem; padding: .3rem 0; font-size: .92rem; color: var(--ink-3); }
+.ud-step.active { color: var(--ink); font-weight: 600; }
+.ud-step.done { color: var(--ink-2); }
+.ud-step .ic { width: 1.1rem; text-align: center; }
+.ud-step.done .ic { color: var(--green); }
+.ud-step.active .ic { color: var(--blue); }
 
-/* ══════════════════════════════════════════════════
-   TABS
-══════════════════════════════════════════════════ */
-.stTabs [data-baseweb="tab-list"] {
-    background: var(--surface) !important;
-    border-bottom: 2px solid var(--border) !important;
-    border-radius: 0 !important;
-    padding: 0 2rem !important;
-    gap: 0 !important;
-    overflow-x: auto !important;
-    scrollbar-width: none !important;
-}
-.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
-.stTabs [data-baseweb="tab"] {
-    font-family: var(--font) !important;
-    font-size: .875rem !important;
-    font-weight: 500 !important;
-    color: var(--text-2) !important;
-    border-radius: 0 !important;
-    padding: .85rem 1.2rem !important;
-    border-bottom: 2px solid transparent !important;
-    margin-bottom: -2px !important;
-    white-space: nowrap !important;
-    transition: color .15s !important;
-}
-.stTabs [aria-selected="true"] {
-    background: transparent !important;
-    color: var(--blue) !important;
-    border-bottom-color: var(--blue) !important;
-    font-weight: 600 !important;
-}
-.stTabs [data-baseweb="tab-panel"] { padding: 1.5rem 2rem !important; }
+/* Result */
+.ud-result-head { margin: 2rem 0 .25rem; font-weight: 800; font-size: 1.35rem; letter-spacing: -.4px; }
+.ud-quote { border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; margin: 1rem 0 0; }
+.ud-qline { display: flex; justify-content: space-between; font-size: .92rem; padding: .25rem 0; color: var(--ink-2); }
+.ud-qline.total { border-top: 1px solid var(--line); margin-top: .4rem; padding-top: .6rem;
+                  color: var(--ink); font-weight: 800; font-size: 1.1rem; }
 
-/* ══════════════════════════════════════════════════
-   INPUTS
-══════════════════════════════════════════════════ */
-.stTextInput > div > div > input {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-    color: var(--text-1) !important;
-    font-family: var(--font) !important;
-    font-size: .9rem !important;
-    padding: .65rem 1rem !important;
-    min-height: 44px !important;
-    box-shadow: none !important;
-    transition: border-color .15s, box-shadow .15s !important;
-}
-.stTextInput > div > div > input:focus {
-    border-color: var(--blue) !important;
-    box-shadow: 0 0 0 3px rgba(26,115,232,.15) !important;
-    outline: none !important;
-}
-.stTextInput > div > div > input::placeholder { color: var(--text-3) !important; }
-.stSelectbox > div > div {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-    color: var(--text-1) !important;
-    min-height: 44px !important;
-    box-shadow: none !important;
-}
-.stSelectbox > div > div:focus-within {
-    border-color: var(--blue) !important;
-    box-shadow: 0 0 0 3px rgba(26,115,232,.15) !important;
-}
-.stFileUploader > div {
-    background: var(--surface-2) !important;
-    border: 2px dashed var(--border) !important;
-    border-radius: var(--r-lg) !important;
-}
-.stFileUploader > div:hover { border-color: var(--blue) !important; }
-.stRadio > div { gap: .6rem !important; }
-.stRadio label {
-    font-family: var(--font) !important;
-    font-size: .875rem !important;
-    color: var(--text-2) !important;
-}
-.stCheckbox label {
-    font-family: var(--font) !important;
-    font-size: .875rem !important;
-    color: var(--text-1) !important;
-}
-.stMultiSelect > div {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-}
+/* Delivery */
+.ud-done { background: var(--paper-2); border: 1px solid var(--line); border-radius: 12px;
+           padding: 1.25rem 1.2rem; margin: 1.5rem 0 1rem; }
+.ud-done h2 { margin: 0 0 .3rem; font-size: 1.35rem; font-weight: 800; letter-spacing: -.4px; }
+.ud-done p { margin: 0; color: var(--ink-2); }
 
-/* ══════════════════════════════════════════════════
-   PROGRESS TRACKER
-══════════════════════════════════════════════════ */
-.ud-progress-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-xl);
-    overflow: hidden;
-    box-shadow: var(--shadow-sm);
-    margin-bottom: 1rem;
-}
-.ud-progress-header {
-    padding: 1.1rem 1.4rem .8rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-2);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.ud-progress-title {
-    font-size: .9rem;
-    font-weight: 600;
-    color: var(--text-1);
-}
-.ud-progress-eta {
-    font-size: .8rem;
-    color: var(--text-2);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-pill);
-    padding: .2rem .7rem;
-}
-.ud-progress-bar-wrap {
-    height: 3px;
-    background: var(--surface-3);
-    overflow: hidden;
-}
-.ud-progress-bar-fill {
-    height: 100%;
-    background: var(--blue);
-    transition: width .6s ease;
-}
-.ud-steps-list { padding: .5rem 0; }
-.ud-step-row {
-    display: flex;
-    align-items: center;
-    gap: .9rem;
-    padding: .65rem 1.4rem;
-    transition: background .15s;
-}
-.ud-step-row.active { background: var(--blue-light); }
-.ud-step-row.done { background: var(--surface); }
-.ud-step-icon {
-    width: 28px; height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 700;
-    flex-shrink: 0;
-}
-.ud-step-icon.done-ic { background: var(--green-bg); color: var(--green); }
-.ud-step-icon.active-ic { background: var(--blue); color: var(--text-inv); font-size: 13px; }
-.ud-step-icon.pend-ic { background: var(--surface-3); color: var(--text-3); }
-.ud-step-body { flex: 1; min-width: 0; }
-.ud-step-name {
-    font-size: .875rem;
-    font-weight: 600;
-    color: var(--text-1);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.ud-step-row.pending .ud-step-name { color: var(--text-3); font-weight: 400; }
-.ud-step-detail {
-    font-size: .75rem;
-    color: var(--text-2);
-    margin-top: 1px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.ud-step-time {
-    font-size: .75rem;
-    color: var(--text-3);
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-.ud-step-row.active .ud-step-time { color: var(--blue); font-weight: 500; }
-.ud-step-row.done .ud-step-time { color: var(--green); }
+/* Footer */
+.ud-foot { border-top: 1px solid var(--line); margin-top: 3rem; padding: 1.25rem 0 2rem;
+           font-size: .82rem; color: var(--ink-3); display: flex; justify-content: space-between;
+           flex-wrap: wrap; gap: .5rem; }
+.ud-foot a { color: var(--ink-2); }
 
-/* ══════════════════════════════════════════════════
-   EMAIL CAPTURE BANNER
-══════════════════════════════════════════════════ */
-.ud-email-banner {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    background: var(--amber-bg);
-    border: 1px solid #F9AB00;
-    border-radius: var(--r-lg);
-    padding: 1rem 1.25rem;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-}
-.ud-email-banner-text { flex: 1; min-width: 200px; }
-.ud-email-banner-title {
-    font-size: .875rem;
-    font-weight: 600;
-    color: #6A4000;
-    margin-bottom: .2rem;
-}
-.ud-email-banner-sub {
-    font-size: .78rem;
-    color: #7A5000;
-    line-height: 1.4;
-}
-
-/* ══════════════════════════════════════════════════
-   QUOTE CARD
-══════════════════════════════════════════════════ */
-.ud-quote {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-xl);
-    overflow: hidden;
-    box-shadow: var(--shadow-md);
-    margin: 1.25rem 0;
-}
-.ud-quote-top {
-    padding: 1.5rem 1.75rem 1.25rem;
-    background: linear-gradient(135deg, var(--blue) 0%, #4285F4 100%);
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    flex-wrap: wrap;
-    gap: 1rem;
-}
-.ud-quote-tier {
-    font-size: .75rem;
-    font-weight: 600;
-    color: rgba(255,255,255,.8);
-    text-transform: uppercase;
-    letter-spacing: .5px;
-    margin-bottom: .4rem;
-}
-.ud-quote-price {
-    font-size: 3.5rem;
-    font-weight: 700;
-    color: var(--text-inv);
-    line-height: 1;
-}
-.ud-quote-price sup {
-    font-size: 1.25rem;
-    vertical-align: super;
-    font-weight: 400;
-    opacity: .85;
-}
-.ud-quote-meta {
-    text-align: right;
-    font-size: .78rem;
-    color: rgba(255,255,255,.8);
-    line-height: 1.8;
-}
-.ud-quote-body { padding: 1.25rem 1.75rem; }
-.ud-bline {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: .5rem 0;
-    border-bottom: 1px solid var(--border);
-    font-size: .875rem;
-}
-.ud-bline:last-child { border-bottom: none; }
-.ud-bk { color: var(--text-2); }
-.ud-bv { color: var(--text-1); font-weight: 500; }
-.ud-bv.total { color: var(--blue); font-size: 1.1rem; font-weight: 700; }
-.ud-savings-badge {
-    display: inline-block;
-    background: var(--green-bg);
-    color: var(--green);
-    font-size: .72rem;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: var(--r-pill);
-    margin-left: .4rem;
-}
-.ud-quote-foot {
-    padding: .85rem 1.75rem;
-    border-top: 1px solid var(--border);
-    background: var(--surface-2);
-    font-size: .78rem;
-    color: var(--text-3);
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-}
-.ud-quote-trust {
-    display: flex;
-    align-items: center;
-    gap: .3rem;
-}
-
-/* ══════════════════════════════════════════════════
-   PAY BUTTON
-══════════════════════════════════════════════════ */
-.ud-pay-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: .5rem;
-    width: 100%;
-    background: var(--blue);
-    color: var(--text-inv) !important;
-    padding: 1rem 1.5rem;
-    border-radius: var(--r-pill);
-    font-family: var(--font) !important;
-    font-size: 1rem !important;
-    font-weight: 700 !important;
-    text-decoration: none !important;
-    transition: background .15s, box-shadow .15s;
-    box-shadow: var(--shadow-sm);
-    min-height: 52px;
-    margin-top: 1rem;
-}
-.ud-pay-btn:hover {
-    background: var(--blue-dark);
-    box-shadow: var(--shadow-md);
-    text-decoration: none !important;
-    color: var(--text-inv) !important;
-}
-.ud-secure-row {
-    display: flex;
-    justify-content: center;
-    gap: 1.5rem;
-    margin-top: .6rem;
-    flex-wrap: wrap;
-}
-.ud-secure-item {
-    display: flex;
-    align-items: center;
-    gap: .3rem;
-    font-size: .75rem;
-    color: var(--text-3);
-}
-
-/* ══════════════════════════════════════════════════
-   ADDON CARDS
-══════════════════════════════════════════════════ */
-.ud-addon-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: .75rem;
-    margin-bottom: 1rem;
-}
-.ud-addon {
-    background: var(--surface);
-    border: 1.5px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 1rem 1.1rem;
-    transition: border-color .15s, background .15s;
-}
-.ud-addon-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: .3rem;
-}
-.ud-addon-title {
-    font-size: .875rem;
-    font-weight: 600;
-    color: var(--text-1);
-}
-.ud-addon-price {
-    font-size: .9rem;
-    font-weight: 700;
-    color: var(--blue);
-}
-.ud-addon-desc {
-    font-size: .78rem;
-    color: var(--text-2);
-    line-height: 1.5;
-}
-
-/* ══════════════════════════════════════════════════
-   LANG MULTI-SELECT SECTION
-══════════════════════════════════════════════════ */
-.ud-bundle-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: .35rem;
-    background: var(--green-bg);
-    color: var(--green);
-    border: 1px solid #34A853;
-    border-radius: var(--r-pill);
-    font-size: .75rem;
-    font-weight: 600;
-    padding: .25rem .75rem;
-    margin-bottom: .6rem;
-}
-
-/* ══════════════════════════════════════════════════
-   PRICING TAB
-══════════════════════════════════════════════════ */
-.ud-callout {
-    background: var(--blue-light);
-    border: 1px solid rgba(26,115,232,.25);
-    border-radius: var(--r-lg);
-    padding: 1rem 1.25rem;
-    font-size: .875rem;
-    color: #174EA6;
-    line-height: 1.7;
-    margin-bottom: 1.25rem;
-}
-.ud-callout strong { font-weight: 600; }
-
-.ud-tier-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: .75rem;
-    margin-bottom: 1.5rem;
-}
-.ud-tier {
-    background: var(--surface);
-    border: 1.5px solid var(--border);
-    border-radius: var(--r-xl);
-    padding: 1.25rem 1rem;
-    text-align: center;
-    transition: border-color .15s, box-shadow .15s;
-}
-.ud-tier:hover { border-color: var(--blue); box-shadow: var(--shadow-sm); }
-.ud-tier.featured {
-    border-color: var(--blue);
-    box-shadow: var(--shadow-sm);
-    position: relative;
-}
-.ud-tier-badge {
-    position: absolute;
-    top: -11px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--blue);
-    color: var(--text-inv);
-    font-size: .7rem;
-    font-weight: 600;
-    padding: 2px 10px;
-    border-radius: var(--r-pill);
-    white-space: nowrap;
-}
-.ud-tier-em { font-size: 1.5rem; margin-bottom: .5rem; }
-.ud-tier-name {
-    font-size: .82rem;
-    font-weight: 600;
-    color: var(--text-1);
-}
-.ud-tier-dur {
-    font-size: .75rem;
-    color: var(--text-3);
-    margin: .2rem 0 .8rem;
-}
-.ud-tier-price {
-    font-size: 1.85rem;
-    font-weight: 700;
-    color: var(--blue);
-}
-
-/* True cost grid */
-.ud-tc-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: .75rem;
-    margin-bottom: 1.5rem;
-}
-.ud-tc {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 1.25rem 1rem;
-}
-.ud-tc.us {
-    border-color: var(--blue);
-    background: var(--blue-light);
-}
-.ud-tc-svc {
-    font-size: .72rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .5px;
-    color: var(--text-3);
-    margin-bottom: .4rem;
-}
-.ud-tc.us .ud-tc-svc { color: var(--blue-dark); }
-.ud-tc-price {
-    font-size: 2.25rem;
-    font-weight: 700;
-    line-height: 1;
-    margin-bottom: .3rem;
-}
-.ud-tc-price.g { color: var(--green); }
-.ud-tc-price.r { color: var(--red); }
-.ud-tc-detail {
-    font-size: .78rem;
-    color: var(--text-2);
-    line-height: 1.75;
-    border-top: 1px solid var(--border);
-    padding-top: .65rem;
-    margin-top: .65rem;
-}
-
-/* Comparison table */
-.ud-comp-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 1.25rem; }
-.ud-comp {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: .85rem;
-    min-width: 520px;
-}
-.ud-comp thead tr { background: var(--surface-2); }
-.ud-comp th {
-    padding: .75rem 1rem;
-    font-size: .75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .5px;
-    border-bottom: 2px solid var(--border);
-    text-align: center;
-    color: var(--text-2);
-}
-.ud-comp th:first-child { text-align: left; }
-.ud-comp th.us { color: var(--blue); }
-.ud-comp td {
-    padding: .7rem 1rem;
-    border-bottom: 1px solid var(--surface-3);
-    text-align: center;
-    color: var(--text-2);
-}
-.ud-comp td:first-child { text-align: left; color: var(--text-1); font-weight: 500; }
-.ud-comp tr:hover td { background: var(--surface-2); }
-.ud-comp tr.hl td { background: var(--blue-light); }
-.ud-comp tr.sec td {
-    background: var(--surface-3);
-    font-size: .7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .5px;
-    color: var(--text-3);
-    padding: .4rem 1rem;
-    text-align: left;
-}
-.yes  { color: var(--green) !important; font-weight: 600; }
-.no   { color: var(--red)   !important; }
-.warn { color: var(--amber) !important; }
-.best { color: var(--blue)  !important; font-weight: 700; }
-
-/* ══════════════════════════════════════════════════
-   HOW IT WORKS
-══════════════════════════════════════════════════ */
-.ud-how-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: .75rem;
-    margin-bottom: 1.5rem;
-}
-.ud-how-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--r-xl);
-    padding: 1.25rem;
-    transition: box-shadow .15s;
-}
-.ud-how-card:hover { box-shadow: var(--shadow-md); }
-.ud-how-num {
-    width: 32px; height: 32px;
-    border-radius: 50%;
-    background: var(--blue-light);
-    color: var(--blue);
-    font-size: .85rem;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: .75rem;
-}
-.ud-how-title {
-    font-size: .9rem;
-    font-weight: 600;
-    color: var(--text-1);
-    margin-bottom: .35rem;
-}
-.ud-how-desc {
-    font-size: .8rem;
-    color: var(--text-2);
-    line-height: 1.65;
-}
-
-/* Language grid */
-.ud-lang-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .4rem;
-    margin-top: .75rem;
-}
-.ud-lang-chip {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-pill);
-    padding: .25rem .75rem;
-    font-size: .78rem;
-    color: var(--text-2);
-    transition: border-color .15s, background .15s;
-}
-.ud-lang-chip:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-light); }
-
-/* ══════════════════════════════════════════════════
-   FAQ
-══════════════════════════════════════════════════ */
-.ud-faq { border-bottom: 1px solid var(--border); padding: 1.1rem 0; }
-.ud-faq-q {
-    font-size: .9rem;
-    font-weight: 600;
-    color: var(--text-1);
-    margin-bottom: .4rem;
-    display: flex;
-    align-items: flex-start;
-    gap: .6rem;
-}
-.ud-faq-dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--blue);
-    flex-shrink: 0;
-    margin-top: .4rem;
-}
-.ud-faq-a {
-    font-size: .85rem;
-    color: var(--text-2);
-    line-height: 1.75;
-    padding-left: 1.1rem;
-}
-
-/* ══════════════════════════════════════════════════
-   SUCCESS
-══════════════════════════════════════════════════ */
-.ud-success {
-    background: var(--green-bg);
-    border: 1px solid #34A853;
-    border-radius: var(--r-xl);
-    padding: 1.75rem;
-    text-align: center;
-    margin: 1rem 0;
-}
-.ud-success-icon { font-size: 2.5rem; margin-bottom: .5rem; }
-.ud-success-title {
-    font-size: 1.4rem;
-    font-weight: 700;
-    color: var(--green);
-    margin-bottom: .4rem;
-}
-.ud-success-sub { font-size: .875rem; color: #1E7E34; }
-
-/* Download button */
-.stDownloadButton > button {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--blue) !important;
-    color: var(--blue) !important;
-    border-radius: var(--r-pill) !important;
-    font-family: var(--font) !important;
-    font-size: .875rem !important;
-    font-weight: 600 !important;
-    min-height: 44px !important;
-    box-shadow: none !important;
-}
-.stDownloadButton > button:hover {
-    background: var(--blue-light) !important;
-    box-shadow: var(--shadow-sm) !important;
-}
-
-/* ══════════════════════════════════════════════════
-   ALERTS
-══════════════════════════════════════════════════ */
-div[data-testid="stNotification"] {
-    border-radius: var(--r-lg) !important;
-    border-left: 4px solid var(--blue) !important;
-    background: var(--blue-light) !important;
-}
-div[data-testid="stNotification"] p { color: #174EA6 !important; }
-
-/* ══════════════════════════════════════════════════
-   SIDEBAR
-══════════════════════════════════════════════════ */
-section[data-testid="stSidebar"] {
-    background: var(--surface-2) !important;
-    border-right: 1px solid var(--border) !important;
-}
-section[data-testid="stSidebar"] .stMarkdown h3 {
-    font-family: var(--font) !important;
-    font-size: 1rem !important;
-    font-weight: 700 !important;
-    color: var(--text-1) !important;
-}
-section[data-testid="stSidebar"] input {
-    background: var(--surface) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: var(--r-md) !important;
-    color: var(--text-1) !important;
-    font-family: var(--font) !important;
-    min-height: 40px !important;
-}
-section[data-testid="stSidebar"] input:focus {
-    border-color: var(--blue) !important;
-    box-shadow: 0 0 0 3px rgba(26,115,232,.12) !important;
-}
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] label {
-    color: var(--text-2) !important;
-    font-family: var(--font) !important;
-}
-
-/* ══════════════════════════════════════════════════
-   FOOTER
-══════════════════════════════════════════════════ */
-.ud-footer {
-    background: var(--surface-2);
-    border-top: 1px solid var(--border);
-    padding: 2rem 2rem 1.5rem;
-    margin-top: 3rem;
-}
-.ud-footer-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 2rem;
-    margin-bottom: 1.5rem;
-}
-.ud-footer-brand .ud-wordmark { font-size: 1.1rem; margin-bottom: .35rem; }
-.ud-footer-brand p {
-    font-size: .8rem;
-    color: var(--text-2);
-    line-height: 1.6;
-    max-width: 200px;
-}
-.ud-footer-col h4 {
-    font-size: .78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .5px;
-    color: var(--text-3);
-    margin-bottom: .65rem;
-}
-.ud-footer-col a {
-    display: block;
-    font-size: .82rem;
-    color: var(--text-2);
-    margin-bottom: .35rem;
-    cursor: pointer;
-    transition: color .15s;
-}
-.ud-footer-col a:hover { color: var(--blue); }
-.ud-footer-bottom {
-    border-top: 1px solid var(--border);
-    padding-top: 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: .5rem;
-}
-.ud-footer-copy {
-    font-size: .78rem;
-    color: var(--text-3);
-}
-.ud-footer-links {
-    display: flex;
-    gap: 1.2rem;
-    font-size: .78rem;
-    color: var(--text-3);
-}
-.ud-footer-links a { cursor: pointer; }
-.ud-footer-links a:hover { color: var(--blue); }
-
-/* ══════════════════════════════════════════════════
-   RESPONSIVE - TABLET
-══════════════════════════════════════════════════ */
-@media (max-width: 768px) {
-    .ud-nav { padding: 0 1rem; }
-    .ud-nav-links { display: none; }
-    .ud-hero { grid-template-columns: 1fr; padding: 2rem 1rem; }
-    .ud-hero-visual { display: none; }
-    .ud-stats { grid-template-columns: repeat(2,1fr); }
-    .ud-stat:nth-child(2) { border-right: none; }
-    .ud-stat:nth-child(3) { border-top: 1px solid var(--border); }
-    .ud-stat:nth-child(4) { border-top: 1px solid var(--border); border-right: none; }
-    .stTabs [data-baseweb="tab-panel"] { padding: 1rem !important; }
-    .ud-tier-grid { grid-template-columns: repeat(2,1fr); }
-    .ud-tc-grid { grid-template-columns: 1fr; }
-    .ud-how-grid { grid-template-columns: 1fr; }
-    .ud-addon-grid { grid-template-columns: 1fr; }
-    .ud-footer-grid { grid-template-columns: 1fr; }
-    .ud-footer-bottom { flex-direction: column; align-items: flex-start; }
-    .ud-quote-top { flex-direction: column; }
-    .ud-quote-meta { text-align: left; }
-}
-
-@media (max-width: 480px) {
-    .ud-hero h1 { font-size: 1.9rem; }
-    .ud-hero-ctas { flex-direction: column; }
-    .ud-tier-grid { grid-template-columns: 1fr 1fr; }
-    .ud-quote-price { font-size: 2.75rem; }
-    .ud-hero-ctas .ud-btn { width: 100%; text-align: center; }
-}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1396,6 +317,51 @@ DETECT_ORDER   = [
     "pl-PL", "uk-UA", "en-US",
 ]
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LANGUAGES OFFERED ON THE SITE
+# The 20 most spoken languages that Google speech, translation and voices support.
+# (Nigerian Pidgin and Hausa rank in the top 20 but have no voice support, so
+#  Tamil, Korean and Filipino take their places.)
+# ══════════════════════════════════════════════════════════════════════════════
+SITE_LANGS = [
+    ("en-US",  "English"),
+    ("cmn-CN", "Chinese (Mandarin)"),
+    ("hi-IN",  "Hindi"),
+    ("es-US",  "Spanish"),
+    ("ar-XA",  "Arabic"),
+    ("fr-FR",  "French"),
+    ("bn-IN",  "Bengali"),
+    ("pt-BR",  "Portuguese"),
+    ("ru-RU",  "Russian"),
+    ("id-ID",  "Indonesian"),
+    ("ur-IN",  "Urdu"),
+    ("de-DE",  "German"),
+    ("ja-JP",  "Japanese"),
+    ("mr-IN",  "Marathi"),
+    ("vi-VN",  "Vietnamese"),
+    ("te-IN",  "Telugu"),
+    ("tr-TR",  "Turkish"),
+    ("ta-IN",  "Tamil"),
+    ("ko-KR",  "Korean"),
+    ("fil-PH", "Filipino"),
+]
+SITE_KEYS  = [k for k, _ in SITE_LANGS]
+SITE_NAMES = {k: n for k, n in SITE_LANGS}
+NAME_TO_KEY = {n: k for k, n in SITE_LANGS}
+
+# Languages the own-voice model (ElevenLabs eleven_multilingual_v2) can speak.
+CLONE_OK = {
+    "en-US", "cmn-CN", "hi-IN", "es-US", "ar-XA", "fr-FR", "pt-BR", "ru-RU",
+    "id-ID", "de-DE", "ja-JP", "tr-TR", "ta-IN", "ko-KR", "fil-PH",
+}
+MAX_TARGETS = 3
+
+# Demo clips shown at the top of the page (original vs dubbed).
+DEMO_ORIGINAL = "demo/original.mp4"
+DEMO_DUBBED   = "demo/dubbed.mp4"
+DEMO_CAPTION  = "Recorded on a phone in English. Dubbed into Spanish in the same voice."
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PRICING ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1489,22 +455,16 @@ def get_duration(path: str) -> float:
     try:    return float(r.stdout.strip())
     except: return 300.0
 
-def find_cookies() -> list:
-    for p in ["cookies.txt", "/app/cookies.txt",
-              os.path.join(os.getcwd(), "cookies.txt")]:
-        if os.path.exists(p):
-            return ["--cookies", p, "--user-agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 Chrome/120.0.0.0"]
-    return []
-
-def validate_yt(url: str) -> bool:
-    return bool(re.match(
-        r"^https?://(www\.)?(youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)",
-        url.strip()))
-
 def cfg(key: str) -> str:
-    return os.environ.get(key, st.session_state.get(key, ""))
+    """Read a setting from environment variables, then Streamlit secrets."""
+    val = os.environ.get(key, "")
+    if val:
+        return val
+    try:
+        return str(st.secrets.get(key, "") or "")
+    except Exception:
+        return ""
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SRT SUBTITLE GENERATION
@@ -1597,74 +557,6 @@ def separate_music(audio_path: str, work_dir: str) -> tuple[str, str]:
           no_vocals_path])
 
     return vocals_path, no_vocals_path
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SENDGRID EMAIL
-# ══════════════════════════════════════════════════════════════════════════════
-def send_ready_email(to_email: str, checkout_url: str,
-                     api_key: str, info: dict) -> bool:
-    """Send 'video ready' email with Stripe checkout link."""
-    try:
-        import sendgrid
-        from sendgrid.helpers.mail import Mail
-
-        sg   = sendgrid.SendGridAPIClient(api_key=api_key)
-        html = f"""
-<!DOCTYPE html>
-<html>
-<body style="font-family: 'Helvetica Neue', Arial, sans-serif;
-             background: #F8F9FA; margin: 0; padding: 2rem;">
-  <div style="max-width: 520px; margin: 0 auto; background: #fff;
-              border-radius: 16px; overflow: hidden;
-              border: 1px solid #DADCE0;">
-    <div style="background: #1A73E8; padding: 1.5rem 2rem;">
-      <h1 style="color: #fff; font-size: 1.4rem; margin: 0;
-                 font-weight: 700; letter-spacing: -0.3px;">Ultradub</h1>
-      <p style="color: rgba(255,255,255,.8); margin: .25rem 0 0;
-                font-size: .85rem;">Your voice, in every language</p>
-    </div>
-    <div style="padding: 1.75rem 2rem;">
-      <h2 style="color: #202124; font-size: 1.25rem; margin: 0 0 .75rem;
-                 font-weight: 700;">Your dubbed video is ready!</h2>
-      <p style="color: #5F6368; line-height: 1.7; margin: 0 0 1.25rem;">
-        Your <strong>{info.get('dur', '')} minute</strong> video has been
-        successfully dubbed and is waiting for you.
-      </p>
-      <div style="background: #F8F9FA; border-radius: 12px;
-                  padding: 1rem; margin-bottom: 1.25rem;
-                  border: 1px solid #DADCE0;">
-        <div style="font-size:.78rem; color:#80868B; margin-bottom:.2rem;">
-          Your quote</div>
-        <div style="font-size:1.75rem; font-weight:700; color:#202124;">
-          ${info.get('price', '')}</div>
-      </div>
-      <a href="{checkout_url}"
-         style="display: block; background: #1A73E8; color: #fff;
-                text-align: center; padding: .9rem 1.5rem;
-                border-radius: 24px; text-decoration: none;
-                font-weight: 600; font-size: 1rem; margin-bottom: 1rem;">
-        Pay &amp; Download Video
-      </a>
-      <p style="color: #80868B; font-size: .78rem; text-align: center;
-                margin: 0; line-height: 1.6;">
-        This link expires in 24 hours.
-        Secured by Stripe - no account required.
-      </p>
-    </div>
-  </div>
-</body>
-</html>"""
-
-        msg = Mail(
-            from_email="emre.senturer@live.com",
-            to_emails=to_email,
-            subject="Your Ultradub video is ready - pay & download now",
-            html_content=html,
-        )
-        sg.send(msg)
-        return True
-    except Exception:
-        return False
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GOOGLE CLOUD - STT
@@ -1824,10 +716,10 @@ def _identify_primary_speaker_segments(
     Falls back to empty list on any error.
     """
     try:
-        # Use a 90-second sample for diarization - enough to identify speakers
+        # Use a 55-second sample: synchronous recognition accepts at most 60 seconds
         sample = tempfile.mktemp(suffix=".mp3")
         _run(["ffmpeg", "-y", "-i", audio_path,
-              "-t", "90",
+              "-t", "55",
               "-ar", "16000", "-ac", "1",
               "-c:a", "libmp3lame", "-q:a", "5", sample])
 
@@ -2054,19 +946,18 @@ def el_delete_voice(voice_id: str, api_key: str) -> None:
 # SYNCLABS - LIP SYNC
 # ══════════════════════════════════════════════════════════════════════════════
 def _upload_for_sync(path: str, api_key: str) -> str:
-    try:
-        with open(path, "rb") as f:
-            r = requests.post("https://api.sync.so/v2/upload",
-                              headers={"x-api-key": api_key},
-                              files={"file": f}, timeout=180)
-        if r.status_code == 200:
-            return r.json().get("url") or r.json().get("fileUrl")
-    except Exception:
-        pass
+    """Upload a file to the lip-sync provider and return its URL.
+    Customer videos are never sent to public file hosts; if the provider
+    upload fails, lip sync is skipped and the customer is not charged for it."""
     with open(path, "rb") as f:
-        r = requests.post("https://0x0.st", files={"file": f}, timeout=180)
+        r = requests.post("https://api.sync.so/v2/upload",
+                          headers={"x-api-key": api_key},
+                          files={"file": f}, timeout=180)
     r.raise_for_status()
-    return r.text.strip()
+    url = r.json().get("url") or r.json().get("fileUrl")
+    if not url:
+        raise RuntimeError("Lip-sync upload returned no file URL.")
+    return url
 
 
 def run_lipsync(video: str, audio: str, api_key: str, stat_ph) -> str:
@@ -2099,63 +990,33 @@ def run_lipsync(video: str, audio: str, api_key: str, stat_ph) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # CORE PIPELINE STEPS
 # ══════════════════════════════════════════════════════════════════════════════
-def step_download(url: str, work_dir: str) -> str:
-    """
-    Download video from YouTube or other URL.
-
-    YouTube actively blocks cloud server IPs with SABR streaming.
-    We try multiple player clients in order of reliability:
-      1. tv_embedded  - most reliable bypass for cloud IPs
-      2. mweb         - mobile web, often works when others fail
-      3. web_creator  - creator studio client, less restricted
-      4. ios          - iOS client format
-    Falls back with a clear upload-directly message if all fail.
-    """
-    cookies = find_cookies()
-    tmpl    = os.path.join(work_dir, "source.%(ext)s")
-
-    clients = [
-        "tv_embedded",
-        "mweb",
-        "web_creator",
-        "ios",
-    ]
-
-    last_error = None
-    for client in clients:
-        try:
-            _run([
-                "yt-dlp",
-                "--extractor-args", f"youtube:player_client={client}",
-                "--js-runtimes", "nodejs",
-                "--format", "best[height<=720]/best",
-                "--output", tmpl,
-                "--no-playlist",
-                "--no-check-certificates",
-            ] + cookies + [url])
-            # If we get here it worked
-            files = list(Path(work_dir).glob("source.*"))
-            if files:
-                return str(files[0])
-        except RuntimeError as e:
-            last_error = str(e)
-            continue
-
-    raise RuntimeError(
-        "YouTube is blocking downloads from cloud servers for this video. "
-        "The easiest fix is to download the video to your phone or computer "
-        "and upload it directly using the 'Upload a file' option. "
-        f"\n\nTechnical details: {last_error}"
-    )
+UPLOAD_DIR = os.path.join(VIDEO_STORE, "uploads")
 
 
-def step_save_upload(f, work_dir: str) -> str:
-    ext = f.name.rsplit(".", 1)[-1].lower()
-    raw = os.path.join(work_dir, f"upload.{ext}")
-    with open(raw, "wb") as out:
+def save_upload_once(f) -> tuple[str, float]:
+    """Save an uploaded file to disk once per upload and return (path, duration)."""
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    token = str(getattr(f, "file_id", "") or f"{f.name}-{f.size}")
+    cache = st.session_state.setdefault("upload_cache", {})
+    hit = cache.get(token)
+    if hit and os.path.exists(hit["path"]):
+        return hit["path"], hit["duration"]
+    ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else "mp4"
+    path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4().hex}.{ext}")
+    with open(path, "wb") as out:
         out.write(f.getbuffer())
+    duration = get_duration(path)
+    cache[token] = {"path": path, "duration": duration}
+    return path, duration
+
+
+def step_prepare_video(raw: str, work_dir: str) -> str:
+    """Copy the upload into the work folder, converting to MP4 when needed."""
+    ext = raw.rsplit(".", 1)[-1].lower()
     if ext == "mp4":
-        return raw
+        dst = os.path.join(work_dir, "source.mp4")
+        shutil.copy2(raw, dst)
+        return dst
     mp4 = os.path.join(work_dir, "source.mp4")
     _run(["ffmpeg", "-y", "-i", raw,
           "-c:v", "libx264", "-c:a", "aac",
@@ -2274,1333 +1135,587 @@ def make_preview(full: str, out: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # STRIPE
 # ══════════════════════════════════════════════════════════════════════════════
-def stripe_create(amount: float, vk: str, sk: str, app_url: str) -> str:
+def stripe_create(amount: float, vk: str, sk: str, app_url: str,
+                  description: str) -> str:
     import stripe as _s
     _s.api_key = sk
     base = app_url.rstrip("/")
-    s    = _s.checkout.Session.create(
-        payment_method_types=["card"],
+    s = _s.checkout.Session.create(
+        # No payment_method_types: Stripe shows whatever is enabled in the
+        # dashboard (cards, Apple Pay, Google Pay, Link).
         line_items=[{"price_data": {
             "currency": "usd",
-            "product_data": {"name": "Ultradub - Dubbed Video",
-                             "description": "AI-dubbed video. Instant download."},
-            "unit_amount": int(amount * 100),
+            "product_data": {"name": "Ultradub dubbed video",
+                             "description": description},
+            "unit_amount": int(round(amount * 100)),
         }, "quantity": 1}],
         mode="payment",
         success_url=(f"{base}?payment=success"
-                     f"&session_id={{CHECKOUT_SESSION_ID}}"
-                     f"&video_key={vk}"),
+                     f"&session_id={{CHECKOUT_SESSION_ID}}"),
         cancel_url=f"{base}?payment=cancelled",
         metadata={"video_key": vk},
     )
     return s.url
 
 
-def stripe_verify(sid: str, sk: str) -> tuple[bool, str]:
+def stripe_paid_session(sid: str, sk: str):
+    """Return the Checkout Session if it is paid, otherwise None."""
     import stripe as _s
     _s.api_key = sk
     try:
         s = _s.checkout.Session.retrieve(sid)
         if s.payment_status == "paid":
-            return True, s.metadata.get("video_key", "")
+            return s
     except Exception:
-        pass
-    return False, ""
+        traceback.print_exc()
+    return None
+
+
+def stripe_refund(session, sk: str) -> bool:
+    """Refund a paid session in full. Safe to call more than once."""
+    import stripe as _s
+    _s.api_key = sk
+    try:
+        _s.Refund.create(payment_intent=session.payment_intent,
+                         idempotency_key=f"ultradub-refund-{session.id}")
+        return True
+    except Exception:
+        traceback.print_exc()
+        return False
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SESSION STATE
+# STORAGE CLEANUP - finished videos are kept for 24 hours
 # ══════════════════════════════════════════════════════════════════════════════
+KEEP_HOURS = 24
+
+
+@st.cache_resource(ttl=3600)
+def sweep_store() -> bool:
+    cutoff = time.time() - KEEP_HOURS * 3600
+    for p in Path(VIDEO_STORE).rglob("*"):
+        try:
+            if p.is_file() and p.stat().st_mtime < cutoff:
+                p.unlink()
+        except Exception:
+            pass
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# APP
+# ══════════════════════════════════════════════════════════════════════════════
+class UserFacingError(Exception):
+    """An error whose message is safe and useful to show the customer."""
+
+
+sweep_store()
+
+GKEY  = cfg("GOOGLE_API_KEY")
+SKEY  = cfg("STRIPE_SECRET_KEY")
+AURL  = cfg("APP_URL")
+ELKEY = cfg("ELEVENLABS_API_KEY")
+SLKEY = cfg("SYNCLABS_API_KEY")
+SUPPORT_EMAIL = cfg("SUPPORT_EMAIL")
+
+CONFIG_MISSING = [k for k, v in [("GOOGLE_API_KEY", GKEY),
+                                 ("STRIPE_SECRET_KEY", SKEY),
+                                 ("APP_URL", AURL)] if not v]
+if CONFIG_MISSING:
+    print(f"[ultradub] Missing settings: {', '.join(CONFIG_MISSING)}")
+
+APP_DIR = Path(__file__).resolve().parent
+
 DEFAULTS: dict = {
     "done":          False,
     "preview_bytes": None,
-    "vk":            None,
-    "checkout_url":  None,
     "quote":         None,
-    "detected_lang": None,
-    "lang_srts":     {},     # {lang_key: srt_string}
-    "n_langs":       1,
-    "proc_start":    None,
-    "user_email":    "",
-    "email_sent":    False,
+    "checkout_url":  None,
+    "result_langs":  [],
+    "result_voice":  False,
+    "result_lips":   False,
+    "notes":         [],
 }
-for k, v in DEFAULTS.items():
+
+
+def reset_results() -> None:
+    for k, v in DEFAULTS.items():
+        st.session_state[k] = list(v) if isinstance(v, list) else v
+
+
+for k in DEFAULTS:
     if k not in st.session_state:
-        st.session_state[k] = v
+        reset_results()
+        break
+
+
+# ── Small helpers ─────────────────────────────────────────────────────────────
+def lang_name(key: str) -> str:
+    return SITE_NAMES.get(key) or LANG_LABELS.get(key, key)
+
+
+def join_names(names: list[str]) -> str:
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def fmt_len(sec: float) -> str:
+    sec = int(round(sec))
+    if sec < 60:
+        return f"{sec} second"
+    m, s = divmod(sec, 60)
+    return f"{m} min {s} s" if s else f"{m} min"
+
+
+def demo_source(local: str, url_key: str):
+    url = cfg(url_key)
+    if url:
+        return url
+    p = APP_DIR / local
+    return str(p) if p.exists() else None
+
+
+def render_top() -> None:
+    st.markdown(
+        '<div class="ud-top"><div class="ud-wordmark">Ultra<span>dub</span></div>'
+        '<div class="ud-top-note">No account needed</div></div>',
+        unsafe_allow_html=True)
+
+
+def render_footer() -> None:
+    contact = ""
+    if SUPPORT_EMAIL:
+        e = html.escape(SUPPORT_EMAIL)
+        contact = f'Questions? <a href="mailto:{e}">{e}</a>'
+    st.markdown(
+        f'<div class="ud-foot"><div>© 2026 Ultradub</div><div>{contact}</div></div>',
+        unsafe_allow_html=True)
+
+
+def render_progress(ph, steps: list[tuple[str, str]], current: str,
+                    done_ids: set, note: str) -> None:
+    rows = ""
+    for sid, name in steps:
+        if sid in done_ids:
+            cls, ic = "done", "✓"
+        elif sid == current:
+            cls, ic = "active", "●"
+        else:
+            cls, ic = "", "○"
+        rows += (f'<div class="ud-step {cls}"><span class="ic">{ic}</span>'
+                 f'<span>{html.escape(name)}</span></div>')
+    ph.markdown(
+        f'<div class="ud-steps"><div class="ud-steps-title">Working on your video'
+        f'<small>{html.escape(note)}</small></div>{rows}</div>',
+        unsafe_allow_html=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR - API CREDENTIALS
-# ══════════════════════════════════════════════════════════════════════════════
-with st.sidebar:
-    st.markdown("### Ultradub")
-    st.caption("Configure your API credentials below.")
-
-    with st.expander("API Credentials", expanded=True):
-        for env, label, ph, tip in [
-            ("GOOGLE_API_KEY",    "AI Platform Key",      "AIza...",
-             "Enable Speech Recognition, Translation, and Text-to-Speech "
-             "APIs in your cloud console."),
-            ("STRIPE_SECRET_KEY", "Payments Key",         "sk_live_... or sk_test_...",
-             "Your payment processor secret key."),
-            ("APP_URL",           "App Public URL",       "https://...",
-             "Your Replit public URL. Required for payment redirects."),
-            ("ELEVENLABS_API_KEY","Voice Cloning Key",    "Optional",
-             "Required for voice cloning add-on."),
-            ("SYNCLABS_API_KEY",  "Lip-Sync Key",         "Optional",
-             "Required for lip-sync add-on."),
-            ("SENDGRID_API_KEY",  "Email Notifications",  "SG.xxx",
-             "Optional. Send email when video is ready."),
-        ]:
-            if os.environ.get(env):
-                st.success(f"✅ {label}")
-            else:
-                v = st.text_input(label, type="password",
-                                  placeholder=ph, help=tip,
-                                  key=f"inp_{env}")
-                if v: st.session_state[env] = v
-
-    with st.expander("Pricing", expanded=False):
-        for t in TIERS:
-            st.markdown(
-                f"{t['emoji']} **{t['name']}** ≤{t['max_min']} min "
-                f"- **${t['price']}**")
-        st.caption("+ Lip-sync: $5–45 | Voice cloning: +$3.99")
-
-    with st.expander("Quick Setup (Replit)", expanded=False):
-        st.code("""# Shell tab:
-sudo apt-get install -y ffmpeg
-pip install -r requirements.txt
-
-# Run:
-streamlit run app.py \\
-  --server.address 0.0.0.0 \\
-  --server.port 8080""", language="bash")
-
-    st.caption("(c) 2025 Ultradub")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# FFMPEG CHECK
-# ══════════════════════════════════════════════════════════════════════════════
-if not ffmpeg_ok():
-    st.error("**ffmpeg not found.** Run `sudo apt-get install -y ffmpeg` in the Shell tab.")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STRIPE RETURN HANDLER
+# AFTER PAYMENT - DELIVERY PAGE
 # ══════════════════════════════════════════════════════════════════════════════
 params   = st.query_params
 p_status = params.get("payment", "")
 p_sid    = params.get("session_id", "")
-p_vk     = params.get("video_key", "")
 
-if p_status == "success" and p_sid and p_vk:
-    paid, vk = stripe_verify(p_sid, cfg("STRIPE_SECRET_KEY"))
-    if paid:
-        # Find all files for this video key
-        all_files = sorted(Path(VIDEO_STORE).glob(f"{vk}*.mp4"))
-        srt_files = sorted(Path(VIDEO_STORE).glob(f"{vk}*.srt"))
 
-        if all_files:
-            st.markdown("""
-            <div class="ud-success">
-                <div class="ud-success-icon">✓</div>
-                <div class="ud-success-title">Payment confirmed</div>
-                <div class="ud-success-sub">
-                    Your dubbed video is unlocked. Download below.
-                </div>
-            </div>""", unsafe_allow_html=True)
-
-            for fp in all_files:
-                label = fp.stem.replace(vk + "_", "").upper() or "VIDEO"
-                lang_label = LANG_LABELS.get(fp.stem.replace(vk + "_", ""), label)
-                with open(fp, "rb") as f:
-                    data = f.read()
-                st.video(data)
-                st.download_button(
-                    f"⬇  Download {lang_label} - MP4",
-                    data=data, file_name=fp.name,
-                    mime="video/mp4", use_container_width=True)
-
-            for sp in srt_files:
-                lang_label = LANG_LABELS.get(sp.stem.replace(vk + "_", ""), "")
-                with open(sp, "r") as f:
-                    srt_data = f.read()
-                st.download_button(
-                    f"⬇  Download Subtitles {lang_label} - SRT",
-                    data=srt_data, file_name=sp.name,
-                    mime="text/plain", use_container_width=True)
-
-            # Clean up
-            for fp in list(all_files) + list(srt_files):
-                try: fp.unlink()
-                except: pass
+def render_delivery(sid: str) -> None:
+    key = f"delivery_{sid}"
+    if key not in st.session_state:
+        sess = stripe_paid_session(sid, SKEY) if SKEY else None
+        if not sess:
+            st.session_state[key] = {"status": "unpaid"}
         else:
-            st.error(f"Video file not found - server may have restarted. "
-                     f"Session ID: `{p_sid}`")
+            md = getattr(sess, "metadata", None)
+            vk = md["video_key"] if md is not None and "video_key" in md else ""
+            valid = bool(re.fullmatch(r"[0-9a-f]{32}", vk or ""))
+            vids = sorted(Path(VIDEO_STORE).glob(f"{vk}_*.mp4")) if valid else []
+            if vids:
+                st.session_state[key] = {"status": "ok", "vk": vk}
+            else:
+                refunded = stripe_refund(sess, SKEY)
+                st.session_state[key] = {"status": "missing", "refunded": refunded}
+
+    info = st.session_state[key]
+
+    if info["status"] == "ok":
+        vk = info["vk"]
+        vids = sorted(Path(VIDEO_STORE).glob(f"{vk}_*.mp4"))
+        st.markdown(
+            '<div class="ud-done"><h2>Payment confirmed</h2>'
+            '<p>Your videos are ready. These download links stay active for 24 hours.</p></div>',
+            unsafe_allow_html=True)
+        if not vids:
+            st.warning("These files have expired. "
+                       + (f"Email {SUPPORT_EMAIL} and we'll sort it out."
+                          if SUPPORT_EMAIL else "Contact us and we'll sort it out."))
+        for fp in vids:
+            lk = fp.stem[len(vk) + 1:]
+            name = lang_name(lk)
+            data = fp.read_bytes()
+            st.markdown(f"**{name}**")
+            st.video(data)
+            st.download_button(f"Download {name} video", data=data,
+                               file_name=f"ultradub_{lk}.mp4", mime="video/mp4",
+                               use_container_width=True, key=f"dl_{fp.name}")
+            srt = fp.with_suffix(".srt")
+            if srt.exists():
+                st.download_button(f"Download {name} subtitles",
+                                   data=srt.read_text(encoding="utf-8"),
+                                   file_name=f"ultradub_{lk}.srt", mime="text/plain",
+                                   use_container_width=True, key=f"dls_{fp.name}")
+
+    elif info["status"] == "missing":
+        if info.get("refunded"):
+            st.error("Your payment went through, but the finished video was lost when "
+                     "our server restarted. We've refunded you in full. The refund "
+                     "usually shows on your statement within 5 to 10 business days.")
+        else:
+            st.error("Your payment went through, but the finished video was lost when "
+                     "our server restarted. "
+                     + (f"Email {SUPPORT_EMAIL} and we'll refund you right away."
+                        if SUPPORT_EMAIL else "Contact us and we'll refund you right away."))
     else:
-        st.warning("Payment could not be verified. Please try again.")
-    st.query_params.clear()
+        st.warning("We couldn't confirm this payment. If you were charged, contact us "
+                   "and we'll fix it.")
+
+    if st.button("Dub another video", use_container_width=True, key="again"):
+        st.query_params.clear()
+        st.rerun()
+
+
+if p_status == "success" and p_sid:
+    render_top()
+    render_delivery(p_sid)
+    render_footer()
     st.stop()
 
-elif p_status == "cancelled":
-    st.info("Payment cancelled. You can try again below.")
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN PAGE
+# ══════════════════════════════════════════════════════════════════════════════
+render_top()
+
+if p_status == "cancelled":
+    st.info("Payment cancelled. You weren't charged.")
     st.query_params.clear()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# NAVBAR
-# ══════════════════════════════════════════════════════════════════════════════
-st.markdown("""
-<div class="ud-nav">
-    <div class="ud-wordmark">Ultra<em>dub</em></div>
-    <div class="ud-nav-links">
-        <a>Product</a>
-        <a>Pricing</a>
-        <a>FAQ</a>
-    </div>
-    <div class="ud-nav-cta">
-        <span style="font-size:.8rem;color:var(--text-3);">No account needed</span>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    '<div class="ud-hero"><h1>Speak once. Be heard in 20 languages.</h1>'
+    '<p>Upload a video you recorded. Ultradub translates what you say, dubs it in a '
+    'natural voice or your own, and keeps your background sound. Watch a free '
+    '15-second preview before you pay.</p></div>',
+    unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# HERO
-# ══════════════════════════════════════════════════════════════════════════════
-st.markdown("""
-<div class="ud-hero">
-  <div class="ud-hero-left">
-    <div class="ud-hero-eyebrow">
-      <span style="width:7px;height:7px;border-radius:50%;
-                   background:var(--blue);display:inline-block;"></span>
-      AI Video Dubbing Platform
-    </div>
-    <h1 class="ud-hero-h1">
-      Your voice,<br>
-      in every <span class="blue">language</span>
-    </h1>
-    <p class="ud-hero-sub">
-      Professional AI dubbing for creators and enterprises.
-      Paste a URL or upload a file. Preview free.
-      Pay once. Download instantly.
-    </p>
-    <div class="ud-hero-ctas">
-      <a class="ud-btn ud-btn-primary ud-btn-lg">Start dubbing</a>
-      <a class="ud-btn ud-btn-outline ud-btn-lg">See pricing</a>
-    </div>
-    <div class="ud-trust">
-      <div class="ud-trust-item">
-        <span class="ud-trust-check">✓</span> No account
-      </div>
-      <div class="ud-trust-item">
-        <span class="ud-trust-check">✓</span> Free 15s preview
-      </div>
-      <div class="ud-trust-item">
-        <span class="ud-trust-check">✓</span> Instant download
-      </div>
-      <div class="ud-trust-item">
-        <span class="ud-trust-check">✓</span> SRT subtitles included
-      </div>
-    </div>
-  </div>
+# ── Demo: original vs dubbed ─────────────────────────────────────────────────
+demo_orig = demo_source(DEMO_ORIGINAL, "DEMO_ORIGINAL_URL")
+demo_dub  = demo_source(DEMO_DUBBED, "DEMO_DUBBED_URL")
+if demo_orig and demo_dub:
+    caption = cfg("DEMO_CAPTION") or DEMO_CAPTION
+    st.markdown(
+        '<div class="ud-demo-head">Hear the difference</div>'
+        f'<div class="ud-demo-cap">{html.escape(caption)}</div>',
+        unsafe_allow_html=True)
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        st.markdown('<div class="ud-clip-label">Original</div>', unsafe_allow_html=True)
+        st.video(demo_orig)
+    with dc2:
+        st.markdown('<div class="ud-clip-label dubbed">Dubbed by Ultradub</div>',
+                    unsafe_allow_html=True)
+        st.video(demo_dub)
 
-  <div class="ud-hero-visual">
-    <div style="
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--r-xl);
-      overflow: hidden;
-      box-shadow: var(--shadow-lg);
-      width: 100%;
-    ">
-      <!-- Card header -->
-      <div style="
-        background: linear-gradient(135deg, #1A73E8 0%, #4285F4 100%);
-        padding: 1.4rem 1.5rem 1.2rem;
-      ">
-        <div style="font-size:.72rem;font-weight:700;letter-spacing:1.5px;
-                    text-transform:uppercase;color:rgba(255,255,255,.75);
-                    margin-bottom:.4rem;">
-          What Ultradub does
-        </div>
-        <div style="font-size:1.1rem;font-weight:700;color:#fff;line-height:1.3;">
-          One video. Dubbed into<br>any language. In minutes.
-        </div>
-      </div>
-      <!-- Feature list -->
-      <div style="padding: .5rem 0;">
-        <div style="display:flex;align-items:center;gap:.9rem;
-                    padding:.75rem 1.25rem;border-bottom:1px solid var(--border);">
-          <div style="width:36px;height:36px;border-radius:50%;
-                      background:var(--blue-light);display:flex;
-                      align-items:center;justify-content:center;
-                      font-size:1rem;flex-shrink:0;">🎙</div>
-          <div>
-            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
-              Auto voice cloning
-            </div>
-            <div style="font-size:.75rem;color:var(--text-2);">
-              Your speaker's voice, in the new language
-            </div>
-          </div>
-          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
-                      color:var(--green);background:var(--green-bg);
-                      padding:.2rem .6rem;border-radius:var(--r-pill);">
-            Included
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:.9rem;
-                    padding:.75rem 1.25rem;border-bottom:1px solid var(--border);">
-          <div style="width:36px;height:36px;border-radius:50%;
-                      background:var(--blue-light);display:flex;
-                      align-items:center;justify-content:center;
-                      font-size:1rem;flex-shrink:0;">🌍</div>
-          <div>
-            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
-              40+ languages
-            </div>
-            <div style="font-size:.75rem;color:var(--text-2);">
-              Neural AI voices — not robotic TTS
-            </div>
-          </div>
-          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
-                      color:var(--blue);background:var(--blue-light);
-                      padding:.2rem .6rem;border-radius:var(--r-pill);">
-            Auto-detect
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:.9rem;
-                    padding:.75rem 1.25rem;border-bottom:1px solid var(--border);">
-          <div style="width:36px;height:36px;border-radius:50%;
-                      background:var(--blue-light);display:flex;
-                      align-items:center;justify-content:center;
-                      font-size:1rem;flex-shrink:0;">📄</div>
-          <div>
-            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
-              SRT subtitles
-            </div>
-            <div style="font-size:.75rem;color:var(--text-2);">
-              Timed subtitles ready for YouTube &amp; social
-            </div>
-          </div>
-          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
-                      color:var(--green);background:var(--green-bg);
-                      padding:.2rem .6rem;border-radius:var(--r-pill);">
-            Free
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;gap:.9rem;
-                    padding:.75rem 1.25rem;">
-          <div style="width:36px;height:36px;border-radius:50%;
-                      background:var(--blue-light);display:flex;
-                      align-items:center;justify-content:center;
-                      font-size:1rem;flex-shrink:0;">⚡</div>
-          <div>
-            <div style="font-size:.82rem;font-weight:600;color:var(--text-1);">
-              No account needed
-            </div>
-            <div style="font-size:.75rem;color:var(--text-2);">
-              Pay once, download instantly — nothing stored
-            </div>
-          </div>
-          <div style="margin-left:auto;font-size:.72rem;font-weight:600;
-                      color:var(--green);background:var(--green-bg);
-                      padding:.2rem .6rem;border-radius:var(--r-pill);">
-            Always
-          </div>
-        </div>
-      </div>
-      <!-- Footer price anchor -->
-      <div style="
-        border-top:1px solid var(--border);
-        background:var(--surface-2);
-        padding:.75rem 1.25rem;
-        display:flex;
-        justify-content:space-between;
-        align-items:center;
-      ">
-        <div style="font-size:.78rem;color:var(--text-2);">
-          Starting from
-        </div>
-        <div style="font-size:1.4rem;font-weight:700;color:var(--blue);">
-          $4.99 <span style="font-size:.75rem;font-weight:400;
-                             color:var(--text-2);">per video</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+# ── Form ─────────────────────────────────────────────────────────────────────
+st.markdown(
+    '<div class="ud-form-head">Dub your video</div>'
+    '<div class="ud-form-sub">A video you recorded on your phone or camera. '
+    'MP4 or MOV, up to 200 MB and 60 minutes.</div>',
+    unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# STATS BAR
-# ══════════════════════════════════════════════════════════════════════════════
-st.markdown("""
-<div class="ud-stats">
-    <div class="ud-stat">
-        <div class="ud-stat-n">40<span class="b">+</span></div>
-        <div class="ud-stat-l">Languages</div>
-    </div>
-    <div class="ud-stat">
-        <div class="ud-stat-n"><span class="b">$</span>4.99</div>
-        <div class="ud-stat-l">Starting price</div>
-    </div>
-    <div class="ud-stat">
-        <div class="ud-stat-n">3<span class="b">×</span></div>
-        <div class="ud-stat-l">Cheaper than competitors</div>
-    </div>
-    <div class="ud-stat">
-        <div class="ud-stat-n"><span class="b">$</span>0</div>
-        <div class="ud-stat-l">Monthly fee</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+uploaded = st.file_uploader(
+    "Your video", type=["mp4", "mov", "m4v", "webm", "mkv", "avi"],
+    label_visibility="collapsed")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MAIN TABS
-# ══════════════════════════════════════════════════════════════════════════════
-tab_proj, tab_price, tab_how, tab_faq = st.tabs([
-    "New Project", "Pricing", "How It Works", "FAQ"])
+video_path, duration = None, 0.0
+if uploaded is not None:
+    try:
+        video_path, duration = save_upload_once(uploaded)
+        if duration > TIERS[-1]["max_min"] * 60:
+            st.error(f"This video is {duration / 60:.0f} minutes long. "
+                     f"The limit is {TIERS[-1]['max_min']} minutes.")
+            video_path = None
+        else:
+            st.markdown(f'<div class="ud-meta">{fmt_len(duration)} video</div>',
+                        unsafe_allow_html=True)
+    except Exception:
+        traceback.print_exc()
+        st.error("We couldn't read this file. Try exporting it again as an MP4.")
+        video_path = None
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PRICING TAB
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_price:
-    st.markdown("""
-    <div class="ud-callout">
-        <strong>The truth competitors don't advertise:</strong>
-        Rask AI starts at $50/month. ElevenLabs starts at $22/month.
-        Their per-video prices only apply if you're already paying those subscriptions.
-        <strong>Ultradub charges $0 until you actually dub a video.</strong>
-    </div>""", unsafe_allow_html=True)
+c1, c2 = st.columns(2)
+with c1:
+    src_name = st.selectbox("Language you speak in the video",
+                            [n for _, n in SITE_LANGS], index=0)
+    src_key = NAME_TO_KEY[src_name]
+with c2:
+    tgt_names = st.multiselect(
+        "Dub it into",
+        [n for k, n in SITE_LANGS if k != src_key],
+        max_selections=MAX_TARGETS,
+        placeholder="Choose up to 3")
+tgt_keys = [NAME_TO_KEY[n] for n in tgt_names]
+st.caption("Pick up to 3 languages. The third one is free.")
 
-    st.markdown("""
-    <div class="ud-section-label">True cost — dubbing one video per month</div>
-    <div class="ud-tc-grid">
-        <div class="ud-tc us">
-            <div class="ud-tc-svc">Ultradub</div>
-            <div class="ud-tc-price g">$9.99</div>
-            <div class="ud-tc-detail">
-                10-min video<br>Subscription: $0<br>
-                Translation: included<br>SRT subtitles: included<br>
-                <strong>All-in: $9.99</strong>
-            </div>
-        </div>
-        <div class="ud-tc">
-            <div class="ud-tc-svc">ElevenLabs</div>
-            <div class="ud-tc-price r">$28+</div>
-            <div class="ud-tc-detail">
-                Subscription: $22/mo<br>Translation: not included<br>
-                Overages: $6+<br>SRT: not included<br>
-                <strong>All-in: $28+</strong>
-            </div>
-        </div>
-        <div class="ud-tc">
-            <div class="ud-tc-svc">Rask AI</div>
-            <div class="ud-tc-price r">$50+</div>
-            <div class="ud-tc-detail">
-                Subscription: $50/mo<br>Lip-sync doubles credits¹<br>
-                Overages: $2/min<br>SRT: extra cost<br>
-                <strong>All-in: $50+</strong>
-            </div>
-        </div>
-    </div>
+own_voice = False
+if ELKEY:
+    unsupported = [SITE_NAMES[k] for k in tgt_keys if k not in CLONE_OK]
+    choice = st.radio(
+        "Voice",
+        ["Natural AI voice", f"My own voice (+${CLONE_ADDON:.2f})"],
+        horizontal=True, disabled=bool(unsupported))
+    own_voice = choice.startswith("My own") and not unsupported
+    if unsupported:
+        st.caption(f"Your own voice isn't available in {join_names(unsupported)} yet. "
+                   "Remove it to use your own voice.")
 
-    <div class="ud-section-label">Base dubbing tiers</div>
-    <div class="ud-tier-grid">
-        <div class="ud-tier">
-            <div class="ud-tier-em">⚡</div>
-            <div class="ud-tier-name">Short</div>
-            <div class="ud-tier-dur">Up to 5 min</div>
-            <div class="ud-tier-price">$4.99</div>
-        </div>
-        <div class="ud-tier featured">
-            <div class="ud-tier-badge">Most popular</div>
-            <div class="ud-tier-em">🎬</div>
-            <div class="ud-tier-name">Medium</div>
-            <div class="ud-tier-dur">Up to 15 min</div>
-            <div class="ud-tier-price">$9.99</div>
-        </div>
-        <div class="ud-tier">
-            <div class="ud-tier-em">🎞️</div>
-            <div class="ud-tier-name">Long</div>
-            <div class="ud-tier-dur">Up to 30 min</div>
-            <div class="ud-tier-price">$19.99</div>
-        </div>
-        <div class="ud-tier">
-            <div class="ud-tier-em">🏆</div>
-            <div class="ud-tier-name">Ultra</div>
-            <div class="ud-tier-dur">Up to 60 min</div>
-            <div class="ud-tier-price">$34.99</div>
-        </div>
-    </div>
-
-    <div class="ud-section-label">Multi-language bundle</div>
-    <div class="ud-callout" style="background:var(--green-bg);
-         border-color:#34A853;color:#1E7E34;">
-        <strong>3 languages for the price of 2.</strong>
-        Select up to 3 output languages per project - the third language is free.
-        Each language gets its own dubbed video + SRT subtitle file.
-    </div>
-
-    <div class="ud-section-label">Add-ons</div>
-    <div class="ud-addon-grid">
-        <div class="ud-addon">
-            <div class="ud-addon-head">
-                <div class="ud-addon-title">Voice cloning</div>
-                <div class="ud-addon-price">+$3.99</div>
-            </div>
-            <div class="ud-addon-desc">
-                We automatically extract the speaker's voice from your
-                video and clone it into the target language. The dubbed
-                audio sounds like the same person speaking a new language.
-                No sample upload needed.
-            </div>
-        </div>
-        <div class="ud-addon">
-            <div class="ud-addon-head">
-                <div class="ud-addon-title">Lip sync</div>
-                <div class="ud-addon-price">+$5–45</div>
-            </div>
-            <div class="ud-addon-desc">
-                AI reshapes the speaker's mouth movements frame-by-frame
-                to match the new dubbed audio. The result looks as if the
-                speaker delivered the content in the target language natively.
-            </div>
-        </div>
-        <div class="ud-addon">
-            <div class="ud-addon-head">
-                <div class="ud-addon-title">Music preservation</div>
-                <div class="ud-addon-price">Included free</div>
-            </div>
-            <div class="ud-addon-desc">
-                AI separates background music from the original voice track,
-                preserves it, and blends it back with the new dubbed voice.
-                Background music stays; only the speech is replaced.
-            </div>
-        </div>
-        <div class="ud-addon">
-            <div class="ud-addon-head">
-                <div class="ud-addon-title">SRT subtitles</div>
-                <div class="ud-addon-price">Included free</div>
-            </div>
-            <div class="ud-addon-desc">
-                Every dub includes a timed SRT subtitle file in the
-                target language. Ready to upload to YouTube, social media,
-                or any video platform. Multiple languages get separate SRT files.
-            </div>
-        </div>
-    </div>
-
-    <div class="ud-section-label">Full comparison</div>
-    <div class="ud-comp-wrap">
-    <table class="ud-comp">
-      <thead>
-        <tr>
-          <th style="text-align:left;width:32%"></th>
-          <th class="us">Ultradub</th>
-          <th>Rask AI</th>
-          <th>ElevenLabs</th>
-          <th>Dubly.ai</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr class="sec"><td colspan="5">Pricing</td></tr>
-        <tr class="hl">
-          <td>Subscription required</td>
-          <td><span class="yes">None — ever</span></td>
-          <td><span class="no">$50–600/mo</span></td>
-          <td><span class="no">$22–99/mo</span></td>
-          <td><span class="no">€29–299/mo</span></td>
-        </tr>
-        <tr>
-          <td>Pay per video, no plan</td>
-          <td><span class="yes">Always</span></td>
-          <td><span class="no">No</span></td>
-          <td><span class="no">No</span></td>
-          <td><span class="no">No</span></td>
-        </tr>
-        <tr><td>5-min video true cost</td><td><span class="best">$4.99</span></td><td><span class="warn">$50+ plan</span></td><td><span class="warn">$22+ plan</span></td><td><span class="warn">€29+ plan</span></td></tr>
-        <tr><td>Translation included</td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td></tr>
-        <tr class="sec"><td colspan="5">Features</td></tr>
-        <tr class="hl"><td>Paste YouTube URL</td><td><span class="yes">Yes</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td></tr>
-        <tr><td>SRT subtitle export</td><td><span class="yes">Free — every dub</span></td><td><span class="warn">Paid add-on</span></td><td><span class="no">No</span></td><td><span class="warn">Paid plan</span></td></tr>
-        <tr><td>Background music preserved</td><td><span class="yes">Yes — free</span></td><td><span class="warn">Paid plan</span></td><td><span class="no">No</span></td><td><span class="yes">Yes</span></td></tr>
-        <tr><td>Multi-language bundle</td><td><span class="yes">3 for price of 2</span></td><td><span class="warn">Extra credits</span></td><td><span class="warn">Extra credits</span></td><td><span class="warn">Extra credits</span></td></tr>
-        <tr><td>Auto language detection</td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="warn">Manual only</span></td><td><span class="yes">Yes</span></td></tr>
-        <tr><td>Voice cloning</td><td><span class="yes">Yes (+$3.99)</span></td><td><span class="warn">Pro plan</span></td><td><span class="yes">Plan required</span></td><td><span class="yes">Plan required</span></td></tr>
-        <tr><td>Lip sync</td><td><span class="yes">Yes (+$5–45)</span></td><td><span class="warn">Doubles credits¹</span></td><td><span class="no">No</span></td><td><span class="warn">Doubles credits¹</span></td></tr>
-        <tr class="sec"><td colspan="5">Delivery</td></tr>
-        <tr class="hl"><td>Free preview before paying</td><td><span class="yes">Yes — 15 seconds</span></td><td><span class="no">No</span></td><td><span class="no">No</span></td><td><span class="warn">1 min one-time</span></td></tr>
-        <tr><td>Instant download on same page</td><td><span class="yes">Yes</span></td><td><span class="warn">Dashboard</span></td><td><span class="warn">Dashboard</span></td><td><span class="warn">Dashboard</span></td></tr>
-        <tr><td>Account required</td><td><span class="yes">No</span></td><td><span class="no">Yes</span></td><td><span class="no">Yes</span></td><td><span class="no">Yes</span></td></tr>
-      </tbody>
-    </table>
-    </div>
-    <p style="font-size:.78rem;color:var(--text-3);line-height:1.7;">
-        ¹ Rask AI and Dubly.ai lip-sync doubles credit usage.
-        A 10-min video with lip-sync consumes 20 min of credits - often your entire monthly plan.
-    </p>
-    """, unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HOW IT WORKS TAB
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_how:
-    st.markdown("""
-    <div class="ud-section-label">The process</div>
-    <div class="ud-how-grid">
-        <div class="ud-how-card">
-            <div class="ud-how-num">1</div>
-            <div class="ud-how-title">Input your video</div>
-            <div class="ud-how-desc">
-                Paste a YouTube URL or upload a file - MP4, MOV, AVI,
-                MKV, WebM up to 60 minutes. No account required.
-            </div>
-        </div>
-        <div class="ud-how-card">
-            <div class="ud-how-num">2</div>
-            <div class="ud-how-title">Choose languages</div>
-            <div class="ud-how-desc">
-                Auto-detect source language or select manually.
-                Choose up to 3 output languages. Third language is free.
-            </div>
-        </div>
-        <div class="ud-how-card">
-            <div class="ud-how-num">3</div>
-            <div class="ud-how-title">Add upgrades</div>
-            <div class="ud-how-desc">
-                Enable voice cloning (auto-extracted from video)
-                or lip-sync. Background music is preserved free by default.
-            </div>
-        </div>
-        <div class="ud-how-card">
-            <div class="ud-how-num">4</div>
-            <div class="ud-how-title">AI processes</div>
-            <div class="ud-how-desc">
-                Speech transcribed → translated → synthesised in the
-                target language. Music separated and preserved.
-                Watch real-time progress with step-by-step ETAs.
-            </div>
-        </div>
-        <div class="ud-how-card">
-            <div class="ud-how-num">5</div>
-            <div class="ud-how-title">Free preview</div>
-            <div class="ud-how-desc">
-                Watch the first 15 seconds of your dubbed video
-                before paying. Zero risk - see the quality first.
-            </div>
-        </div>
-        <div class="ud-how-card">
-            <div class="ud-how-num">6</div>
-            <div class="ud-how-title">Pay &amp; download</div>
-            <div class="ud-how-desc">
-                One payment. All language versions + SRT subtitle files
-                download instantly. No dashboard. No email. Immediate delivery.
-            </div>
-        </div>
-    </div>
-
-    <div class="ud-section-label">Supported languages (40+)</div>
-    <div class="ud-lang-grid">
-    """ + "".join(
-        f'<div class="ud-lang-chip">{v["label"]}</div>'
-        for k, v in LANG_REGISTRY.items() if k != "auto"
-    ) + """
-    </div>
-    """, unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# FAQ TAB
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_faq:
-    faqs = [
-        ("Do I need an account?",
-         "No. Ultradub is completely account-free. Paste a URL, configure your settings, "
-         "pay once, download instantly. Nothing is stored about you after your video is delivered."),
-        ("How long does processing take?",
-         "Typically 5–20 minutes depending on video length and selected features. "
-         "Music separation adds 5–10 minutes. Lip-sync adds another 5–10 minutes. "
-         "A real-time progress tracker shows you each step and estimated time remaining. "
-         "You can optionally enter your email to be notified when ready."),
-        ("What is the multi-language bundle?",
-         "You can select up to 3 output languages per project. "
-         "You pay for 2 - the third language is generated free. "
-         "Each language gets its own dubbed video file and SRT subtitle file."),
-        ("Are subtitles really included free?",
-         "Yes. Every dub automatically generates a timed .srt subtitle file in the target language "
-         "at no extra cost. If you select multiple output languages, you get separate SRT files for each."),
-        ("How does background music preservation work?",
-         "Our AI separates the speech track from background music using audio source separation. "
-         "The music is preserved, the speech is replaced with the dubbed voice, "
-         "and both are blended back together. Included free with every dub."),
-        ("How does voice cloning work?",
-         "We automatically extract a 45-second clean speech sample from the original video "
-         "and use it to clone the speaker's voice. No sample upload needed. "
-         "The dubbed audio is then generated in the target language using that cloned voice - "
-         "so it sounds like the same person speaking a new language."),
-        ("Does lip-sync double the price like some competitors?",
-         "No. We charge a flat add-on fee ($5–45 based on video length). "
-         "You always see the exact total before processing starts - no credit doubling, "
-         "no hidden multipliers."),
-        ("What if I'm not happy with the quality?",
-         "You watch a free 15-second watermarked preview before paying. "
-         "If the quality isn't right, simply don't purchase. Zero risk."),
-        ("Is my video data private?",
-         "Videos are processed in isolated temporary directories and deleted within 24 hours "
-         "of your download. We never store, sell, or use your content in any way."),
-        ("What payments are accepted?",
-         "All major credit and debit cards via our payment processor. "
-         "Apple Pay and Google Pay also supported where available."),
-        ("Why doesn't YouTube work sometimes?",
-         "YouTube blocks requests from cloud servers. "
-         "Add a cookies.txt file to your project root (exported from your browser while "
-         "logged into YouTube). Alternatively, download the video manually and upload it directly."),
-    ]
-    for q, a in faqs:
-        st.markdown(
-            f'<div class="ud-faq">'
-            f'<div class="ud-faq-q"><span class="ud-faq-dot"></span>{q}</div>'
-            f'<div class="ud-faq-a">{a}</div>'
-            f'</div>',
-            unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# NEW PROJECT TAB
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_proj:
-
-    # ── Step 1: Video source ─────────────────────────────────────────────────
-    st.markdown('<div class="ud-section-label">1 - Video source</div>',
-                unsafe_allow_html=True)
-    src = st.radio("Video source", ["YouTube / URL", "Upload a file"],
-                   horizontal=True, label_visibility="collapsed")
-
-    yt_url, uploaded_file = "", None
-    if src == "YouTube / URL":
-        yt_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...",
-                               label_visibility="collapsed")
+lipsync = False
+if SLKEY:
+    if duration:
+        ls_label = f"Match lip movements (+${LIPSYNC_ADDON[get_tier(duration)['name']]:.2f})"
     else:
-        uploaded_file = st.file_uploader(
-            "Upload your video",
-            type=["mp4","mov","avi","mkv","webm","m4v"],
-            label_visibility="collapsed")
+        ls_label = "Match lip movements (from +$5.00)"
+    lipsync = st.checkbox(
+        ls_label,
+        help="Adjusts mouth movements to fit the new language. "
+             "Adds several minutes of processing.")
 
-    # ── Step 2: Languages ────────────────────────────────────────────────────
-    st.markdown('<div class="ud-section-label">2 - Language settings</div>',
-                unsafe_allow_html=True)
+# ── Live price ───────────────────────────────────────────────────────────────
+if video_path and tgt_keys:
+    q = compute_quote(duration, tgt_keys, lipsync, own_voice)
+    parts = [f"Dubbing, {q['n_langs']} language{'s' if q['n_langs'] > 1 else ''}: "
+             f"${q['lang_price']:.2f}"]
+    if q["savings"]:
+        parts.append("Third language: free")
+    if q["clone"]:
+        parts.append(f"Your own voice: ${q['clone']:.2f}")
+    if q["ls"]:
+        parts.append(f"Lip matching: ${q['ls']:.2f}")
+    st.markdown(
+        '<div class="ud-price"><span class="ud-price-label">Your price</span>'
+        f'<span class="ud-price-value">${q["total"]:.2f}</span></div>'
+        f'<div class="ud-price-lines">{"<br>".join(parts)}</div>',
+        unsafe_allow_html=True)
+else:
+    st.markdown(
+        '<div class="ud-price"><span class="ud-price-label">Your price</span>'
+        '<span class="ud-price-value muted">Upload a video and pick a language</span></div>',
+        unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        src_label = st.selectbox(
-            "Source language",
-            [LANG_LABELS[k] for k in INPUT_LANGS])
-        src_key = INPUT_LANGS[[LANG_LABELS[k] for k in INPUT_LANGS].index(src_label)]
+if CONFIG_MISSING:
+    st.warning("Dubbing is temporarily unavailable. Please check back soon.")
 
-    # Primary output language
-    with c2:
-        out_labels    = [LANG_LABELS[k] for k in OUTPUT_LANGS]
-        default_en_us = out_labels.index(LANG_LABELS["en-US"])
-        tgt1_label    = st.selectbox("Primary output language", out_labels,
-                                      index=default_en_us)
-        tgt1_key      = OUTPUT_LANGS[out_labels.index(tgt1_label)]
+ready = bool(video_path and tgt_keys and not CONFIG_MISSING)
+run_btn = st.button("Make my free preview", type="primary",
+                    use_container_width=True, disabled=not ready)
 
-    # Bundle - additional languages
-    st.markdown("""
-    <div class="ud-bundle-badge">
-        ✦ Bundle: 3 languages for the price of 2
-    </div>""", unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════════════════════════
+# PIPELINE
+# ══════════════════════════════════════════════════════════════════════════════
+if run_btn and ready:
+    reset_results()
+    prog_ph = st.empty()
+    note_ph = st.empty()
 
-    remaining_labels = [l for l in out_labels if l != tgt1_label]
-    extra_langs      = st.multiselect(
-        "Add more output languages (optional - up to 2 more)",
-        remaining_labels,
-        max_selections=2,
-        help="Select up to 2 more languages. If you select 2, the third is free.")
+    steps = [("prepare",    "Reading your video"),
+             ("separate",   "Separating your voice from background sound"),
+             ("transcribe", "Transcribing what you say"),
+             ("translate",  "Translating")]
+    if own_voice:
+        steps.append(("clone", "Learning your voice"))
+    steps.append(("dub", "Recording the dub"))
+    if lipsync:
+        steps.append(("lipsync", "Matching lip movements"))
+    steps.append(("preview", "Making your preview"))
 
-    # Build final language key list
-    extra_keys  = [OUTPUT_LANGS[out_labels.index(l)] for l in extra_langs]
-    all_tgt_keys = [tgt1_key] + extra_keys
-    n_langs      = len(all_tgt_keys)
+    eta = estimate_eta(duration / 60, len(tgt_keys), own_voice, lipsync, False)
+    eta_total = sum(v for k, v in eta.items() if k != "download")
+    eta_note = f"About {max(1, round(eta_total / 60))} min. Keep this tab open."
 
-    if n_langs == 3:
-        st.success("✦ Bundle applied - 3 languages for the price of 2. "
-                   f"Saving ${TIERS[0]['price']:.2f}+")
+    done_ids: set = set()
+    work_dir = tempfile.mkdtemp(prefix="ultradub_")
+    clone_id, clone_done, lips_done = "", False, False
+    notes: list[str] = []
 
-    # ── Step 3: Add-ons ──────────────────────────────────────────────────────
-    st.markdown('<div class="ud-section-label">3 - Optional add-ons</div>',
-                unsafe_allow_html=True)
+    def at(sid: str) -> None:
+        render_progress(prog_ph, steps, sid, done_ids, eta_note)
 
-    st.markdown("""
-    <div class="ud-addon-grid">
-        <div class="ud-addon">
-            <div class="ud-addon-head">
-                <div class="ud-addon-title">Voice cloning</div>
-                <div class="ud-addon-price">+$3.99</div>
-            </div>
-            <div class="ud-addon-desc">
-                Auto-extracted from your video. No sample upload needed.
-                Requires Voice Cloning API key in sidebar.
-            </div>
-        </div>
-        <div class="ud-addon">
-            <div class="ud-addon-head">
-                <div class="ud-addon-title">Lip sync</div>
-                <div class="ud-addon-price">+$5–45</div>
-            </div>
-            <div class="ud-addon-desc">
-                Mouth movements matched to dubbed audio.
-                Requires Lip-Sync API key in sidebar.
-            </div>
-        </div>
-    </div>""", unsafe_allow_html=True)
+    try:
+        at("prepare")
+        src_video = step_prepare_video(video_path, work_dir)
+        audio_path = os.path.join(work_dir, "audio.mp3")
+        step_extract_audio(src_video, audio_path)
+        done_ids.add("prepare")
 
-    ac1, ac2 = st.columns(2)
-    with ac1:
-        want_clone = st.checkbox(
-            "Enable voice cloning (+$3.99)",
-            help="Requires Voice Cloning API key in sidebar.")
-    with ac2:
-        want_lipsync = st.checkbox(
-            "Enable lip sync (+$5–45)",
-            help="Requires Lip-Sync API key in sidebar.")
-
-    want_music = True  # Always on - free, included by default
-
-    # ── Step 4: Email (shown always, optional) ───────────────────────────────
-    st.markdown('<div class="ud-section-label">4 - Email notification (optional)</div>',
-                unsafe_allow_html=True)
-    user_email = st.text_input(
-        "Email notification",
-        placeholder="your@email.com - we'll notify you when ready",
-        label_visibility="collapsed",
-        key="email_input")
-
-    # ── Process button ───────────────────────────────────────────────────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    run_btn = st.button("Process Video & Get Quote", use_container_width=True)
-
-    # ── Progress placeholders ─────────────────────────────────────────────────
-    step_ph  = st.empty()
-    stat_ph  = st.empty()
-    prog_ph  = st.empty()
-
-    # ── Step renderer ─────────────────────────────────────────────────────────
-    def render_steps(steps_cfg: list[dict], current_id: str,
-                     completed: set, done_all: bool):
-        bar_pct = int(len(completed) / max(len(steps_cfg), 1) * 100)
-        if done_all: bar_pct = 100
-
-        rows = ""
-        total_remaining = 0
-        for s in steps_cfg:
-            sid = s["id"]
-            if sid in completed or done_all:
-                cls = "done"; icon = '<span style="color:var(--green);font-weight:700;">✓</span>'
-                elapsed = s.get("elapsed", "")
-                time_str = f'<span style="color:var(--green);">{elapsed}</span>' if elapsed else ""
-            elif sid == current_id:
-                cls = "active"; icon = '<span style="font-size:13px;animation:spin 1s linear infinite;display:inline-block;">⟳</span>'
-                time_str = f'<span style="color:var(--blue);">~{s["eta_label"]}</span>'
-            else:
-                cls = "pending"; icon = '<span style="color:var(--text-3);">○</span>'
-                time_str = f'<span style="color:var(--text-3);">{s["eta_label"]}</span>'
-                total_remaining += s.get("eta_sec", 0)
-
-            rows += (
-                f'<div class="ud-step-row {cls}">'
-                f'  <div class="ud-step-icon {"done-ic" if cls=="done" else ("active-ic" if cls=="active" else "pend-ic")}">'
-                f'    {icon}</div>'
-                f'  <div class="ud-step-body">'
-                f'    <div class="ud-step-name">{s["name"]}</div>'
-                f'    <div class="ud-step-detail">{s.get("detail","")}</div>'
-                f'  </div>'
-                f'  <div class="ud-step-time">{time_str}</div>'
-                f'</div>')
-
-        eta_label = (f"~{total_remaining//60} min remaining"
-                     if total_remaining > 60
-                     else (f"~{total_remaining}s remaining"
-                           if total_remaining > 0 else "Almost done"))
-
-        html = f"""
-        <style>
-        @keyframes spin{{from{{transform:rotate(0deg)}}to{{transform:rotate(360deg)}}}}
-        </style>
-        <div class="ud-progress-card">
-            <div class="ud-progress-header">
-                <div class="ud-progress-title">Processing your video</div>
-                <div class="ud-progress-eta">{"Complete" if done_all else eta_label}</div>
-            </div>
-            <div class="ud-progress-bar-wrap">
-                <div class="ud-progress-bar-fill" style="width:{bar_pct}%"></div>
-            </div>
-            <div class="ud-steps-list">{rows}</div>
-        </div>"""
-        step_ph.markdown(html, unsafe_allow_html=True)
-
-    # ══════════════════════════════════════════════════════════════════════
-    # PIPELINE EXECUTION
-    # ══════════════════════════════════════════════════════════════════════
-    if run_btn:
-        gkey  = cfg("GOOGLE_API_KEY")
-        skey  = cfg("STRIPE_SECRET_KEY")
-        aurl  = cfg("APP_URL")
-        elkey = cfg("ELEVENLABS_API_KEY")
-        slkey = cfg("SYNCLABS_API_KEY")
-        sgkey = cfg("SENDGRID_API_KEY")
-
-        errs = []
-        if not gkey:  errs.append("AI Platform Key required (sidebar)")
-        if not skey:  errs.append("Payments Key required (sidebar)")
-        if not aurl:  errs.append("App Public URL required (sidebar)")
-        if not yt_url and not uploaded_file:
-            errs.append("Enter a YouTube URL or upload a video file")
-        if yt_url and not validate_yt(yt_url):
-            errs.append("Invalid YouTube URL")
-        if want_lipsync and not slkey:
-            errs.append("Lip-Sync API key required (sidebar)")
-        if want_clone and not elkey:
-            errs.append("Voice Cloning API key required (sidebar)")
-        if not ffmpeg_ok():
-            errs.append("ffmpeg not installed - run: sudo apt-get install -y ffmpeg")
-
-        if errs:
-            for e in errs: st.error(e)
-            st.stop()
-
-        for k, v in DEFAULTS.items(): st.session_state[k] = v
-        st.session_state.proc_start = time.time()
-        st.session_state.user_email = user_email.strip()
-
-        work_dir   = tempfile.mkdtemp(prefix="ultradub_")
-        clone_id   = ""
-        completed  = set()
-        lang_srt_data: dict[str, str] = {}
-
-        # Build step config (for progress display)
-        def _fmt_eta(sec: int) -> str:
-            if sec <= 0:  return ""
-            if sec < 90:  return f"{sec}s"
-            return f"{sec//60}m {sec%60}s"
-
-        def build_steps(dur_min: float) -> list[dict]:
-            eta = estimate_eta(dur_min, n_langs, want_clone,
-                               want_lipsync, want_music)
-            steps = [
-                {"id": "download",   "name": "Downloading video",
-                 "detail": "",
-                 "eta_sec": eta["download"], "eta_label": _fmt_eta(eta["download"])},
-                {"id": "music_sep",  "name": "Separating background music",
-                 "detail": "AI isolates voice from music",
-                 "eta_sec": eta["music_sep"], "eta_label": _fmt_eta(eta["music_sep"])},
-                {"id": "transcribe", "name": "Transcribing speech",
-                 "detail": "Converting speech to text",
-                 "eta_sec": eta["transcribe"], "eta_label": _fmt_eta(eta["transcribe"])},
-                {"id": "translate",  "name": "Translating content",
-                 "detail": f"Into {n_langs} language{'s' if n_langs>1 else ''}",
-                 "eta_sec": eta["translate"], "eta_label": _fmt_eta(eta["translate"])},
-                {"id": "clone",      "name": "Identifying & cloning speaker voice",
-                 "detail": "Diarization → extract dominant speaker → clone",
-                 "eta_sec": eta["clone"], "eta_label": _fmt_eta(eta["clone"])},
-                {"id": "synthesise", "name": "Synthesising dubbed voices",
-                 "detail": f"{n_langs} language{'s' if n_langs>1 else ''}",
-                 "eta_sec": eta["synthesise"], "eta_label": _fmt_eta(eta["synthesise"])},
-                {"id": "merge",      "name": "Merging audio into video",
-                 "detail": "Blending voice + music tracks",
-                 "eta_sec": eta["merge"], "eta_label": _fmt_eta(eta["merge"])},
-                {"id": "lipsync",    "name": "Lip-sync processing",
-                 "detail": "Matching mouth movements",
-                 "eta_sec": eta["lipsync"], "eta_label": _fmt_eta(eta["lipsync"])},
-                {"id": "preview",    "name": "Creating preview & quote",
-                 "detail": "15-second preview + Stripe session",
-                 "eta_sec": eta["preview"], "eta_label": _fmt_eta(eta["preview"])},
-            ]
-            # Remove steps not applicable
-            if not want_music: steps = [s for s in steps if s["id"] != "music_sep"]
-            if not want_clone:  steps = [s for s in steps if s["id"] != "clone"]
-            if not want_lipsync: steps = [s for s in steps if s["id"] != "lipsync"]
-            return steps
-
-        steps_cfg = build_steps(5.0)  # initial estimate
-
-        def mark(sid: str, detail: str = "", elapsed: str = ""):
-            completed.add(sid)
-            for s in steps_cfg:
-                if s["id"] == sid:
-                    s["detail"]  = detail or s["detail"]
-                    s["elapsed"] = elapsed
-            next_id = next((s["id"] for s in steps_cfg
-                            if s["id"] not in completed), "preview")
-            render_steps(steps_cfg, next_id, completed, False)
-
+        at("separate")
+        no_vocals_path = None
+        audio_for_stt = audio_path
         try:
-            # ── Download ─────────────────────────────────────────────────
-            render_steps(steps_cfg, "download", completed, False)
-            stat_ph.info("Acquiring video…")
+            vocals_path, no_vocals_path = separate_music(audio_path, work_dir)
+            audio_for_stt = vocals_path
+        except Exception:
+            traceback.print_exc()
+        done_ids.add("separate")
 
-            if uploaded_file:
-                video_path = step_save_upload(uploaded_file, work_dir)
-            else:
-                video_path = step_download(yt_url.strip(), work_dir)
+        at("transcribe")
+        segs, _ = transcribe_audio(audio_for_stt, src_key, GKEY)
+        if not segs and audio_for_stt != audio_path:
+            segs, _ = transcribe_audio(audio_path, src_key, GKEY)
+        if not segs:
+            raise UserFacingError(
+                f"We couldn't hear any {lang_name(src_key)} speech in this video. "
+                "Check that you picked the language you speak and that your voice "
+                "is clear. You haven't been charged.")
+        done_ids.add("transcribe")
 
-            duration   = get_duration(video_path)
-            dur_min    = duration / 60
-            steps_cfg  = build_steps(dur_min)  # rebuild with real duration
+        at("translate")
+        texts = [s["text"] for s in segs]
+        srts: dict[str, str] = {}
+        for lk in tgt_keys:
+            translated = translate_batch(texts, lk, GKEY)
+            for seg, tr in zip(segs, translated):
+                seg[f"translated_{lk}"] = tr
+            srts[lk] = generate_srt(segs, f"translated_{lk}")
+        done_ids.add("translate")
 
-            if duration > TIERS[-1]["max_min"] * 60:
-                raise ValueError(
-                    f"Video is {dur_min:.1f} min - "
-                    f"max is {TIERS[-1]['max_min']} min.")
+        if own_voice:
+            at("clone")
+            try:
+                sample = extract_voice_sample(
+                    audio_for_stt, work_dir,
+                    lang_code=LANG_REGISTRY[src_key]["stt"], api_key=GKEY)
+                clone_id = el_clone_voice(f"ud_{uuid.uuid4().hex[:8]}", sample, ELKEY)
+                clone_done = True
+            except Exception:
+                traceback.print_exc()
+                notes.append("We couldn't learn your voice from this recording, so "
+                             "the dub uses a natural AI voice. You won't be charged "
+                             "for your own voice.")
+            done_ids.add("clone")
 
-            mark("download", f"{dur_min:.1f} min · {int(duration)}s")
+        at("dub")
+        vk = uuid.uuid4().hex
+        finals: dict[str, str] = {}
+        for lk in tgt_keys:
+            lsegs = step_synthesise_lang(segs, lk, work_dir, GKEY,
+                                         use_clone=clone_done,
+                                         clone_id=clone_id, el_key=ELKEY)
+            finals[lk] = step_merge(src_video, lsegs, duration, work_dir,
+                                    no_vocals_path=no_vocals_path,
+                                    suffix=f"_{lk}")
+        done_ids.add("dub")
 
-            # ── Extract base audio ────────────────────────────────────────
-            stat_ph.info("Extracting audio…")
-            audio_path = os.path.join(work_dir, "audio.mp3")
-            step_extract_audio(video_path, audio_path)
+        if lipsync:
+            at("lipsync")
+            try:
+                synced: dict[str, str] = {}
+                for lk in tgt_keys:
+                    dub_audio = os.path.join(work_dir, f"lipsync_audio_{lk}.mp3")
+                    step_extract_audio(finals[lk], dub_audio)
+                    synced[lk] = run_lipsync(src_video, dub_audio, SLKEY, note_ph)
+                finals.update(synced)
+                lips_done = True
+            except Exception:
+                traceback.print_exc()
+                notes.append("Lip matching didn't work for this video, so it isn't "
+                             "included and you won't be charged for it.")
+            note_ph.empty()
+            done_ids.add("lipsync")
 
-            # ── Music separation ──────────────────────────────────────────
-            no_vocals_path = None
-            if want_music:
-                render_steps(steps_cfg, "music_sep", completed, False)
-                stat_ph.info("Separating background music (this takes a few minutes)…")
-                try:
-                    vocals_path, no_vocals_path = separate_music(audio_path, work_dir)
-                    # Use separated vocals for STT (cleaner input)
-                    audio_for_stt = vocals_path
-                    mark("music_sep", "Music isolated · vocals extracted")
-                except Exception as me:
-                    stat_ph.warning(f"Music separation skipped ({me}). Using original audio.")
-                    audio_for_stt = audio_path
-                    completed.add("music_sep")
-            else:
-                audio_for_stt = audio_path
+        at("preview")
+        os.makedirs(VIDEO_STORE, exist_ok=True)
+        for lk, fp in finals.items():
+            shutil.copy2(fp, os.path.join(VIDEO_STORE, f"{vk}_{lk}.mp4"))
+            with open(os.path.join(VIDEO_STORE, f"{vk}_{lk}.srt"), "w",
+                      encoding="utf-8") as f:
+                f.write(srts.get(lk, ""))
+        preview_path = os.path.join(work_dir, "preview.mp4")
+        make_preview(os.path.join(VIDEO_STORE, f"{vk}_{tgt_keys[0]}.mp4"), preview_path)
+        preview_bytes = Path(preview_path).read_bytes()
 
-            # ── Transcribe ────────────────────────────────────────────────
-            render_steps(steps_cfg, "transcribe", completed, False)
-            stat_ph.info("Transcribing speech…")
-            segs, detected_key = transcribe_audio(audio_for_stt, src_key, gkey)
+        # Charge only for what was actually delivered.
+        quote = compute_quote(duration, tgt_keys, lips_done, clone_done)
+        desc = (f"{quote['dur']} min video dubbed into "
+                f"{join_names([lang_name(k) for k in tgt_keys])}")
+        checkout_url = stripe_create(quote["total"], vk, SKEY, AURL, desc)
+        done_ids.add("preview")
+        render_progress(prog_ph, steps, "", done_ids, "Done")
 
-            # Retry 1: if vocals-separated audio gave nothing, try original
-            if not segs and audio_for_stt != audio_path:
-                stat_ph.info(
-                    "Retrying transcription with original audio…")
-                segs, detected_key = transcribe_audio(
-                    audio_path, src_key, gkey)
+        st.session_state.update(
+            done=True, preview_bytes=preview_bytes, quote=quote,
+            checkout_url=checkout_url, result_langs=list(tgt_keys),
+            result_voice=clone_done, result_lips=lips_done, notes=notes)
 
-            # Retry 2: if auto-detect gave nothing, force Russian
-            # (common for short phone videos where detection fails)
-            if not segs and src_key == "auto":
-                stat_ph.info(
-                    "Auto-detect found no speech - retrying as Russian…")
-                segs, detected_key = transcribe_audio(
-                    audio_path, "ru-RU", gkey)
-
-            if not segs:
-                raise ValueError(
-                    "No speech detected. "
-                    "Please check that the video contains clear spoken audio, "
-                    "or select the source language manually instead of Auto-detect.")
-
-            st.session_state.detected_lang = detected_key
-            mark("transcribe",
-                 f"{len(segs)} segments · "
-                 f"{LANG_LABELS.get(detected_key, detected_key)} detected")
-
-            # ── Translate (all target languages) ─────────────────────────
-            render_steps(steps_cfg, "translate", completed, False)
-            stat_ph.info(f"Translating into {n_langs} language(s)…")
-
-            texts = [s["text"] for s in segs]
-            for lang_key in all_tgt_keys:
-                translated = translate_batch(texts, lang_key, gkey)
-                for seg, tr in zip(segs, translated):
-                    seg[f"translated_{lang_key}"] = tr
-                # Generate SRT
-                lang_srt_data[lang_key] = generate_srt(
-                    segs, f"translated_{lang_key}")
-
-            mark("translate",
-                 f"{len(segs)} segments · "
-                 f"{', '.join(LANG_LABELS.get(k,'') for k in all_tgt_keys)}")
-
-            # ── Voice clone ───────────────────────────────────────────────
-            if want_clone and elkey:
-                render_steps(steps_cfg, "clone", completed, False)
-                stat_ph.info(
-                    "Identifying primary speaker using diarization…")
-                try:
-                    # Pass the detected language BCP-47 code and API key
-                    # so diarization can correctly identify WHO speaks most
-                    detected_bcp47 = (
-                        LANG_REGISTRY.get(detected_key, {}).get("stt", "ru-RU")
-                        if detected_key else "ru-RU"
-                    )
-                    sample = extract_voice_sample(
-                        audio_for_stt,
-                        work_dir,
-                        lang_code=detected_bcp47,
-                        api_key=gkey,
-                    )
-                    stat_ph.info("Cloning identified speaker voice…")
-                    clone_id = el_clone_voice(
-                        f"ud_{uuid.uuid4().hex[:8]}", sample, elkey)
-                    mark("clone", "Primary speaker identified and cloned")
-                except Exception as ce:
-                    stat_ph.warning(
-                        f"Voice cloning unavailable ({ce}). "
-                        "Using standard neural voice instead.")
-                    completed.add("clone")
-
-            # ── Synthesise & merge each language ─────────────────────────
-            render_steps(steps_cfg, "synthesise", completed, False)
-            stat_ph.info(f"Synthesising dubbed voices…")
-
-            vk        = uuid.uuid4().hex
-            final_paths: dict[str, str] = {}
-
-            for lang_key in all_tgt_keys:
-                stat_ph.info(
-                    f"Synthesising {LANG_LABELS.get(lang_key, lang_key)}…")
-                lang_segs = step_synthesise_lang(
-                    segs, lang_key, work_dir, gkey,
-                    use_clone=bool(clone_id),
-                    clone_id=clone_id, el_key=elkey)
-
-                render_steps(steps_cfg, "merge", completed, False)
-                stat_ph.info(
-                    f"Merging {LANG_LABELS.get(lang_key, lang_key)}…")
-                final_path = step_merge(
-                    video_path, lang_segs, duration, work_dir,
-                    no_vocals_path=no_vocals_path,
-                    suffix=f"_{lang_key}")
-                final_paths[lang_key] = final_path
-
-            mark("synthesise",
-                 f"{len(segs)} segments · "
-                 f"{n_langs} language{'s' if n_langs>1 else ''}")
-            mark("merge", "Audio blended with preserved music")
-
-            # ── Lip-sync ──────────────────────────────────────────────────
-            if want_lipsync and slkey:
-                render_steps(steps_cfg, "lipsync", completed, False)
-                stat_ph.info("Running lip-sync…")
-                try:
-                    for lang_key in all_tgt_keys:
-                        dubbed_audio = os.path.join(
-                            work_dir, f"lipsync_audio_{lang_key}.mp3")
-                        step_extract_audio(final_paths[lang_key], dubbed_audio)
-                        final_paths[lang_key] = run_lipsync(
-                            video_path, dubbed_audio, slkey, stat_ph)
-                    mark("lipsync", f"Lip-sync applied to {n_langs} version(s)")
-                except Exception as le:
-                    stat_ph.warning(f"Lip-sync failed ({le}). Continuing without.")
-                    completed.add("lipsync")
-
-            # ── Store videos + SRT files ──────────────────────────────────
-            render_steps(steps_cfg, "preview", completed, False)
-            stat_ph.info("Creating preview and preparing quote…")
-
-            # Store each language version + SRT
-            for lang_key, fp in final_paths.items():
-                stored = os.path.join(VIDEO_STORE, f"{vk}_{lang_key}.mp4")
-                shutil.copy2(fp, stored)
-                srt_path = os.path.join(VIDEO_STORE, f"{vk}_{lang_key}.srt")
-                with open(srt_path, "w", encoding="utf-8") as f:
-                    f.write(lang_srt_data.get(lang_key, ""))
-
-            # Create preview from primary language
-            preview_path = os.path.join(work_dir, "preview.mp4")
-            make_preview(
-                os.path.join(VIDEO_STORE, f"{vk}_{tgt1_key}.mp4"),
-                preview_path)
-            with open(preview_path, "rb") as f:
-                preview_bytes = f.read()
-
-            # Quote & Stripe
-            quote        = compute_quote(duration, all_tgt_keys,
-                                          want_lipsync, want_clone)
-            checkout_url = stripe_create(quote["total"], vk, skey, aurl)
-
-            mark("preview", "Quote ready · Stripe session created")
-
-            # Send email if provided and SendGrid configured
-            if user_email and sgkey:
-                send_ready_email(
-                    user_email, checkout_url, sgkey,
-                    {"dur": f"{quote['dur']}", "price": f"{quote['total']:.2f}"})
-                st.session_state.email_sent = True
-
-            render_steps(steps_cfg, "", completed, True)
-            stat_ph.success(
-                "Processing complete! Review your quote and free preview below.")
-
-            st.session_state.done          = True
-            st.session_state.preview_bytes = preview_bytes
-            st.session_state.vk            = vk
-            st.session_state.quote         = quote
-            st.session_state.checkout_url  = checkout_url
-            st.session_state.lang_srts     = lang_srt_data
-            st.session_state.n_langs       = n_langs
-
-        except Exception as exc:
-            stat_ph.error(f"Error: {exc}")
-            st.exception(exc)
-        finally:
-            if clone_id and elkey:
-                el_delete_voice(clone_id, elkey)
-            shutil.rmtree(work_dir, ignore_errors=True)
-
-    # ══════════════════════════════════════════════════════════════════════
-    # RESULTS
-    # ══════════════════════════════════════════════════════════════════════
-    if st.session_state.done and st.session_state.preview_bytes:
-        q = st.session_state.quote
-
-        # Detected language info
-        if st.session_state.detected_lang and src_key == "auto":
-            det = LANG_LABELS.get(st.session_state.detected_lang, "Unknown")
-            st.info(f"Auto-detected source language: **{det}**")
-
-        # Email sent confirmation
-        if st.session_state.email_sent:
-            st.success(
-                f"Confirmation sent to {st.session_state.user_email} - "
-                "we'll also email you the download link.")
-
-        # ── Quote card ────────────────────────────────────────────────────
-        addon_rows = ""
-        if q["ls"]:
-            addon_rows += (
-                f'<div class="ud-bline">'
-                f'<span class="ud-bk">Lip-sync</span>'
-                f'<span class="ud-bv">+${q["ls"]:.2f}</span></div>')
-        if q["clone"]:
-            addon_rows += (
-                f'<div class="ud-bline">'
-                f'<span class="ud-bk">Voice cloning</span>'
-                f'<span class="ud-bv">+${q["clone"]:.2f}</span></div>')
-        savings_html = (
-            f'<span class="ud-savings-badge">Save ${q["savings"]:.2f}</span>'
-            if q["savings"] > 0 else "")
-
-        st.markdown(f"""
-        <div class="ud-quote">
-            <div class="ud-quote-top">
-                <div>
-                    <div class="ud-quote-tier">
-                        {q['emoji']} {q['tier']} · {q['dur']} min
-                        · {q['n_langs']} language{'s' if q['n_langs']>1 else ''}
-                    </div>
-                    <div class="ud-quote-price">
-                        <sup>$</sup>{q['total']:.2f}
-                    </div>
-                </div>
-                <div class="ud-quote-meta">
-                    Instant download<br>
-                    No account required<br>
-                    Secured payment
-                </div>
-            </div>
-            <div class="ud-quote-body">
-                <div class="ud-bline">
-                    <span class="ud-bk">
-                        Base dubbing
-                        ({q['n_langs']} language{'s' if q['n_langs']>1 else ''})
-                        {savings_html}
-                    </span>
-                    <span class="ud-bv">${q['lang_price']:.2f}</span>
-                </div>
-                {addon_rows}
-                <div class="ud-bline">
-                    <span class="ud-bk" style="font-weight:600;
-                        color:var(--text-1);font-size:.875rem;">
-                        Total (USD)
-                    </span>
-                    <span class="ud-bv total">${q['total']:.2f}</span>
-                </div>
-            </div>
-            <div class="ud-quote-foot">
-                <div class="ud-quote-trust">
-                    <span class="ud-trust-check">✓</span>
-                    SRT subtitles included
-                </div>
-                <div class="ud-quote-trust">
-                    <span class="ud-trust-check">✓</span>
-                    Music preserved
-                </div>
-                <div class="ud-quote-trust">
-                    <span class="ud-trust-check">✓</span>
-                    Instant delivery
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ── 15-second preview ─────────────────────────────────────────────
-        st.markdown(
-            '<div class="ud-section-label">Free preview - first 15 seconds</div>',
-            unsafe_allow_html=True)
-        st.caption(
-            "Purchase below to unlock the full dubbed video "
-            "and all subtitle files.")
-        st.video(st.session_state.preview_bytes)
-
-        # ── Pay button ────────────────────────────────────────────────────
-        st.markdown(f"""
-        <a href="{st.session_state.checkout_url}"
-           target="_top" class="ud-pay-btn">
-            Pay ${q['total']:.2f} - Unlock Full Video
-        </a>
-        <div class="ud-secure-row">
-            <div class="ud-secure-item">
-                <span class="ud-trust-check">✓</span> Secure payment
-            </div>
-            <div class="ud-secure-item">
-                <span class="ud-trust-check">✓</span> Card details stay private
-            </div>
-            <div class="ud-secure-item">
-                <span class="ud-trust-check">✓</span> Instant download
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Start a new project", use_container_width=True):
-            for k, v in DEFAULTS.items():
-                st.session_state[k] = v
-            st.rerun()
+    except UserFacingError as e:
+        prog_ph.empty()
+        st.error(str(e))
+    except Exception:
+        traceback.print_exc()
+        prog_ph.empty()
+        st.error("Something went wrong while dubbing this video. You haven't been "
+                 "charged. Try again, or try a shorter clip.")
+    finally:
+        if clone_id and ELKEY:
+            el_delete_voice(clone_id, ELKEY)
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FOOTER
+# PREVIEW + PAY
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown("""
-<div class="ud-footer">
-    <div class="ud-footer-grid">
-        <div class="ud-footer-brand">
-            <div class="ud-wordmark">Ultra<em>dub</em></div>
-            <p>Your voice, in every language.
-            Professional AI dubbing for creators and enterprises.</p>
-        </div>
-        <div class="ud-footer-col">
-            <h4>Product</h4>
-            <a>How it works</a>
-            <a>Pricing</a>
-            <a>Languages</a>
-            <a>FAQ</a>
-        </div>
-        <div class="ud-footer-col">
-            <h4>Company</h4>
-            <a>Privacy policy</a>
-            <a>Terms of service</a>
-            <a>Contact</a>
-        </div>
-    </div>
-    <div class="ud-footer-bottom">
-        <div class="ud-footer-copy">© 2025 Ultradub</div>
-        <div class="ud-footer-links">
-            <a>Privacy</a>
-            <a>Terms</a>
-            <a>Contact</a>
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+if st.session_state.done and st.session_state.preview_bytes:
+    q = st.session_state.quote
+    langs = st.session_state.result_langs
+    names = join_names([lang_name(k) for k in langs])
+
+    st.markdown('<div class="ud-result-head">Your free preview</div>',
+                unsafe_allow_html=True)
+    for n in st.session_state.notes:
+        st.info(n)
+    st.video(st.session_state.preview_bytes)
+
+    extras = []
+    if st.session_state.result_voice:
+        extras.append("in your own voice")
+    if st.session_state.result_lips:
+        extras.append("with lip matching")
+    what = names + (" " + " and ".join(extras) if extras else "")
+    st.caption(f"The first 15 seconds in {lang_name(langs[0])}. You're buying: {what}. "
+               "Every version comes with a subtitle file.")
+
+    rows = (f'<div class="ud-qline"><span>Dubbing ({q["dur"]} min, {q["n_langs"]} '
+            f'language{"s" if q["n_langs"] > 1 else ""})</span>'
+            f'<span>${q["lang_price"]:.2f}</span></div>')
+    if q["savings"]:
+        rows += '<div class="ud-qline"><span>Third language</span><span>Free</span></div>'
+    if q["clone"]:
+        rows += (f'<div class="ud-qline"><span>Your own voice</span>'
+                 f'<span>${q["clone"]:.2f}</span></div>')
+    if q["ls"]:
+        rows += (f'<div class="ud-qline"><span>Lip matching</span>'
+                 f'<span>${q["ls"]:.2f}</span></div>')
+    rows += (f'<div class="ud-qline total"><span>Total</span>'
+             f'<span>${q["total"]:.2f}</span></div>')
+    st.markdown(f'<div class="ud-quote">{rows}</div>', unsafe_allow_html=True)
+
+    url = html.escape(st.session_state.checkout_url or "", quote=True)
+    st.markdown(
+        f'<a class="ud-pay-btn" href="{url}" target="_top">'
+        f'Pay ${q["total"]:.2f} and download</a>'
+        '<div class="ud-pay-note">Secure checkout by Stripe. '
+        'Your downloads open right after payment.</div>',
+        unsafe_allow_html=True)
+
+    st.write("")
+    if st.button("Start over", use_container_width=True):
+        reset_results()
+        st.rerun()
+
+render_footer()

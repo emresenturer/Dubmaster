@@ -1,25 +1,24 @@
-https://dubmaster.streamlit.app
-AI Video Dubbing Platform
-Your voice,
-in every language 
-Professional AI dubbing for creators and enterprises. Paste a URL or upload a file. Preview free. Pay once. Download instantly.
+# Ultradub
 
-THE PROCESS
-1
-Input your video
-Paste a YouTube URL or upload a file - MP4, MOV, AVI, MKV, WebM up to 60 minutes. No account required.
-2
-Choose languages
-Auto-detect source language or select manually. Choose up to 3 output languages. Third language is free.
-3
-Add upgrades
-Enable voice cloning (auto-extracted from video) or lip-sync. Background music is preserved free by default.
-4
-AI processes
-Speech transcribed → translated → synthesised in the target language. Music separated and preserved. Watch real-time progress with step-by-step ETAs.
-5
-Free preview
-Watch the first 15 seconds of your dubbed video before paying. Zero risk - see the quality first.
-6
-Pay & download
-One payment. All language versions + SRT subtitle files download instantly. No dashboard. No email. Immediate delivery.
+Your voice, in every language.
+
+Upload a video you recorded, pick the language you speak and up to 3 languages to dub into
+(20 of the world's most spoken languages). Choose a natural AI voice or your own voice, add lip
+matching if you want it, watch a free 15-second preview, then pay once and download every
+version with subtitles.
+
+## Settings (Streamlit secrets)
+
+Required
+- GOOGLE_API_KEY: Speech-to-Text, Translation and Text-to-Speech enabled
+- STRIPE_SECRET_KEY
+- APP_URL: the public address of this app, used for the payment return
+
+Optional
+- ELEVENLABS_API_KEY: turns on the "My own voice" option
+- SYNCLABS_API_KEY: turns on lip matching
+- SUPPORT_EMAIL: shown in the footer and in delivery messages
+- DEMO_ORIGINAL_URL, DEMO_DUBBED_URL, DEMO_CAPTION: demo clips (or commit demo/original.mp4 and demo/dubbed.mp4)
+
+Finished videos are kept for 24 hours. If a paid video is missing (for example after a server
+restart), the customer is refunded automatically.
